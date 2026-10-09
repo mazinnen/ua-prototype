@@ -1,4 +1,5 @@
 const STORAGE_KEY = "union-deck-lab-decks-v1";
+const CATALOG_URL_KEY = "union-deck-lab-catalog-url-v1";
 const COLORS = {
   red: { label: "赤", hex: "#e9775f" },
   blue: { label: "青", hex: "#5d8cdb" },
@@ -7,7 +8,10 @@ const COLORS = {
   green: { label: "緑", hex: "#4ba47d" },
 };
 
-const CATALOG = [
+const SAMPLE_TITLE_ID = "sample-title";
+const BUILTIN_TITLES = [{ id: SAMPLE_TITLE_ID, name: "サンプルタイトル" }];
+let titles = [...BUILTIN_TITLES];
+const BUILTIN_CARDS = [
   { id: "c01", name: "前線のエース", color: "red", cost: 1, bp: 2000, type: "キャラクター", symbol: "前" },
   { id: "c02", name: "熱血の新人", color: "red", cost: 2, bp: 3000, type: "キャラクター", symbol: "熱" },
   { id: "c03", name: "赤き守護者", color: "red", cost: 3, bp: 4000, type: "キャラクター", symbol: "守" },
@@ -33,7 +37,8 @@ const CATALOG = [
   { id: "c23", name: "大樹の番人", color: "green", cost: 3, bp: 4000, type: "キャラクター", symbol: "樹" },
   { id: "c24", name: "翠嵐の王", color: "green", cost: 4, bp: 5000, type: "キャラクター", symbol: "嵐" },
   { id: "c25", name: "自然の導き", color: "green", cost: 2, bp: 0, type: "イベント", symbol: "導" },
-];
+].map((card) => ({ ...card, titleId: SAMPLE_TITLE_ID }));
+let catalog = [...BUILTIN_CARDS];
 
 const STARTER_CARDS = [
   ["c01", 4], ["c02", 4], ["c03", 4], ["c04", 4], ["c05", 4],
@@ -52,7 +57,11 @@ const starterDeck = () => ({
 function loadDecks() {
   try {
     const stored = JSON.parse(localStorage.getItem(STORAGE_KEY) || "null");
-    if (Array.isArray(stored)) return stored.filter((deck) => deck && typeof deck.id === "string" && deck.cards);
+    if (Array.isArray(stored)) {
+      return stored
+        .filter((deck) => deck && typeof deck.id === "string" && deck.cards)
+        .map((deck) => ({ ...deck, titleId: deck.titleId || SAMPLE_TITLE_ID }));
+    }
   } catch (error) {
     console.error("デッキデータを読み込めませんでした。", error);
   }
@@ -67,15 +76,18 @@ let catalogQuery = "";
 let game = null;
 let toastTimer;
 
-function saveDecks() {
+function saveDecks(nextDecks = decks) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(decks));
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDecks));
+    decks = nextDecks;
     const indicator = document.querySelector(".save-indicator");
     if (indicator) indicator.textContent = "✓ 保存しました";
     renderSidebarDecks();
+    return true;
   } catch (error) {
     console.error("デッキを保存できませんでした。", error);
     showToast("保存に失敗しました。ブラウザーの保存領域を確認してください。");
+    return false;
   }
 }
 
@@ -85,7 +97,8 @@ function escapeHtml(value) {
   })[char]);
 }
 
-function getCard(id) { return CATALOG.find((card) => card.id === id); }
+function getCard(id) { return catalog.find((card) => card.id === id); }
+function getTitle(id) { return titles.find((title) => title.id === id); }
 function deckSize(deck) { return Object.values(deck.cards).reduce((sum, count) => sum + count, 0); }
 function deckColors(deck) {
   const colors = [...new Set(Object.entries(deck.cards).filter(([, count]) => count > 0).map(([id]) => getCard(id)?.color).filter(Boolean))];
@@ -95,6 +108,190 @@ function formatDate(timestamp) {
   return new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric" }).format(new Date(timestamp));
 }
 function findDeck(id) { return decks.find((deck) => deck.id === id); }
+
+function validateCatalogPayload(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)
+    || payload.format !== "union-deck-lab-catalog" || payload.version !== 1
+    || !Array.isArray(payload.titles) || !Array.isArray(payload.cards)) {
+    throw new Error("カードカタログの形式が正しくありません。READMEのJSON形式をご確認ください。");
+  }
+
+  const nextTitles = payload.titles.map((title) => {
+    if (!title || typeof title.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/i.test(title.id)
+      || typeof title.name !== "string" || !title.name.trim()) {
+      throw new Error("タイトル情報には英数字のidとnameが必要です。");
+    }
+    return { id: title.id, name: title.name.trim() };
+  });
+  if (new Set(nextTitles.map((title) => title.id)).size !== nextTitles.length) {
+    throw new Error("タイトルIDが重複しています。");
+  }
+
+  const knownTitleIds = new Set([...BUILTIN_TITLES, ...nextTitles].map((title) => title.id));
+  const baseUrl = payload.__sourceUrl;
+  const nextCards = payload.cards.map((card) => {
+    if (!card || typeof card.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/i.test(card.id)
+      || typeof card.titleId !== "string" || !knownTitleIds.has(card.titleId)
+      || typeof card.name !== "string" || !card.name.trim()
+      || !Object.hasOwn(COLORS, card.color)
+      || !Number.isInteger(card.cost) || card.cost < 0
+      || !Number.isInteger(card.bp) || card.bp < 0
+      || typeof card.type !== "string" || typeof card.symbol !== "string") {
+      throw new Error(`カード「${card?.id || "不明"}」の情報が不足しているか正しくありません。`);
+    }
+    let image;
+    if (card.image !== undefined && card.image !== "") {
+      if (typeof card.image !== "string") throw new Error(`カード「${card.id}」の画像パスが正しくありません。`);
+      image = baseUrl ? new URL(card.image, baseUrl).href : card.image;
+      if (!/\.png(?:[?#].*)?$/i.test(image)) {
+        throw new Error(`カード「${card.id}」の画像はPNGを指定してください。`);
+      }
+    }
+    return { ...card, name: card.name.trim(), image };
+  });
+  if (new Set(nextCards.map((card) => card.id)).size !== nextCards.length) {
+    throw new Error("カードIDが重複しています。");
+  }
+  return { titles: nextTitles, cards: nextCards };
+}
+
+async function refreshCatalog(sourceUrl, persistUrl = false) {
+  let url;
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    showToast("カードカタログのURLを確認してください。");
+    return;
+  }
+  const localHttp = url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname);
+  if (url.protocol !== "https:" && !localHttp) {
+    showToast("カードカタログにはHTTPSのURLを指定してください。");
+    return;
+  }
+
+  try {
+    const response = await fetch(url.href, { cache: "no-cache" });
+    if (!response.ok) throw new Error(`カードカタログの取得に失敗しました（HTTP ${response.status}）。`);
+    const payload = await response.json();
+    const validated = validateCatalogPayload({ ...payload, __sourceUrl: url.href });
+    const titleMap = new Map(BUILTIN_TITLES.map((title) => [title.id, title]));
+    validated.titles.forEach((title) => titleMap.set(title.id, title));
+    const cardMap = new Map(BUILTIN_CARDS.map((card) => [card.id, card]));
+    validated.cards.forEach((card) => cardMap.set(card.id, card));
+
+    if (persistUrl) {
+      try {
+        localStorage.setItem(CATALOG_URL_KEY, url.href);
+      } catch (error) {
+        console.error("カタログURLを保存できませんでした。", error);
+        showToast("URLを保存できませんでした。ブラウザーの保存領域を確認してください。");
+        return;
+      }
+    }
+    titles = [...titleMap.values()];
+    catalog = [...cardMap.values()];
+    renderSidebarDecks();
+    if (activeView === "builder") renderBuilder();
+    if (activeView === "decks") renderDecks();
+    showToast(`${validated.titles.length}タイトル・${validated.cards.length}枚のカードを読み込みました。`);
+  } catch (error) {
+    console.error("外部カードカタログを読み込めませんでした。", error);
+    const message = error instanceof TypeError
+      ? "カードカタログを取得できません。URLと公開設定、CORS設定を確認してください。"
+      : error.message;
+    showToast(message);
+  }
+}
+
+function createExportPayload(exportedDecks) {
+  return {
+    format: "union-deck-lab",
+    version: 1,
+    exportedAt: new Date().toISOString(),
+    decks: exportedDecks.map(({ id, name, cards, createdAt, updatedAt }) => ({
+      id, name, cards, createdAt, updatedAt,
+    })),
+  };
+}
+
+function downloadDecks(exportedDecks, filenameBase) {
+  if (!exportedDecks.length) {
+    showToast("書き出すデッキがありません。");
+    return;
+  }
+  const blob = new Blob([JSON.stringify(createExportPayload(exportedDecks), null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = `${filenameBase}.json`;
+  document.body.append(link);
+  link.click();
+  link.remove();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  showToast(`${exportedDecks.length}個のデッキを書き出しました。`);
+}
+
+function validateImportedDecks(payload) {
+  if (!payload || typeof payload !== "object" || Array.isArray(payload)
+    || payload.format !== "union-deck-lab" || payload.version !== 1
+    || !Array.isArray(payload.decks) || payload.decks.length === 0) {
+    throw new Error("対応していないJSON形式です。アプリから書き出したJSONを選んでください。");
+  }
+
+  return payload.decks.map((deck, index) => {
+    if (!deck || typeof deck !== "object" || Array.isArray(deck)
+      || typeof deck.name !== "string" || !deck.name.trim()
+      || !deck.cards || typeof deck.cards !== "object" || Array.isArray(deck.cards)) {
+      throw new Error(`${index + 1}個目のデッキ情報が正しくありません。`);
+    }
+
+    const cards = {};
+    let size = 0;
+    const titleId = typeof deck.titleId === "string" ? deck.titleId : SAMPLE_TITLE_ID;
+    if (!getTitle(titleId)) {
+      throw new Error(`「${deck.name}」のタイトルがこのカタログにありません。先に該当タイトルのカードカタログを読み込んでください。`);
+    }
+    for (const [cardId, count] of Object.entries(deck.cards)) {
+      if (!getCard(cardId)) {
+        throw new Error(`「${deck.name}」に現在のカード一覧にないカードID（${cardId}）が含まれています。`);
+      }
+      if (getCard(cardId).titleId !== titleId) {
+        throw new Error(`「${deck.name}」に選択中のタイトル以外のカードが含まれています。`);
+      }
+      if (!Number.isInteger(count) || count < 1 || count > 4) {
+        throw new Error(`「${deck.name}」のカード枚数は1種類につき1〜4枚で指定してください。`);
+      }
+      cards[cardId] = count;
+      size += count;
+    }
+    if (size > 50) {
+      throw new Error(`「${deck.name}」が50枚を超えています。`);
+    }
+
+    const now = Date.now();
+    return {
+      id: `deck-${now}-${Math.random().toString(36).slice(2, 9)}-${index}`,
+      name: deck.name.trim().slice(0, 40),
+      titleId,
+      cards,
+      createdAt: Number.isFinite(deck.createdAt) ? deck.createdAt : now,
+      updatedAt: Number.isFinite(deck.updatedAt) ? deck.updatedAt : now,
+    };
+  });
+}
+
+async function importDeckFile(file) {
+  try {
+    const payload = JSON.parse(await file.text());
+    const importedDecks = validateImportedDecks(payload);
+    if (!saveDecks([...importedDecks, ...decks])) return;
+    renderDecks();
+    showToast(`${importedDecks.length}個のデッキを読み込みました。`);
+  } catch (error) {
+    console.error("デッキJSONを読み込めませんでした。", error);
+    showToast(error instanceof SyntaxError ? "JSONを解析できません。ファイルの内容を確認してください。" : error.message);
+  }
+}
 
 function showToast(message) {
   const toast = document.querySelector("#toast");
@@ -132,15 +329,18 @@ function renderDecks() {
     const first = COLORS[colors[0]] || COLORS.red;
     const dots = colors.length ? colors : ["red"];
     const size = deckSize(deck);
+    const titleName = getTitle(deck.titleId)?.name || "タイトル未設定";
     return `<article class="deck-card" style="--tint:${first.hex}22">
       <div class="deck-card-top"><div class="deck-color">${dots.map((color) => `<i class="color-dot" style="--dot:${COLORS[color]?.hex || COLORS.red.hex}" title="${COLORS[color]?.label || ""}"></i>`).join("")}</div>
-        <div class="deck-actions"><button class="icon-btn" title="編集" aria-label="編集" data-edit-deck="${escapeHtml(deck.id)}">✎</button><button class="icon-btn" title="複製" aria-label="複製" data-duplicate-deck="${escapeHtml(deck.id)}">⧉</button><button class="icon-btn" title="削除" aria-label="削除" data-delete-deck="${escapeHtml(deck.id)}">×</button></div></div>
-      <h3>${escapeHtml(deck.name || "無題のデッキ")}</h3><p class="deck-note">${colors.map((color) => COLORS[color]?.label).filter(Boolean).join(" / ") || "カラー未設定"}　 ·　更新 ${formatDate(deck.updatedAt || Date.now())}</p>
+        <div class="deck-actions"><button class="icon-btn" title="JSONを書き出す" aria-label="JSONを書き出す" data-export-deck="${escapeHtml(deck.id)}">⇩</button><button class="icon-btn" title="編集" aria-label="編集" data-edit-deck="${escapeHtml(deck.id)}">✎</button><button class="icon-btn" title="複製" aria-label="複製" data-duplicate-deck="${escapeHtml(deck.id)}">⧉</button><button class="icon-btn" title="削除" aria-label="削除" data-delete-deck="${escapeHtml(deck.id)}">×</button></div></div>
+      <h3>${escapeHtml(deck.name || "無題のデッキ")}</h3><p class="deck-note"><strong>${escapeHtml(titleName)}</strong>　·　${colors.map((color) => COLORS[color]?.label).filter(Boolean).join(" / ") || "カラー未設定"}　 ·　更新 ${formatDate(deck.updatedAt || Date.now())}</p>
       <div class="deck-card-bottom"><span class="deck-count"><strong>${size}</strong> / 50 枚</span><button data-start-deck="${escapeHtml(deck.id)}" ${size ? "" : "disabled"}>一人回しを始める　→</button></div>
     </article>`;
   }).join("");
 
-  document.querySelector("#view-decks").innerHTML = `<div class="page-heading"><div><div class="eyebrow">YOUR WORKSPACE</div><h1>デッキ一覧</h1><p>アイデアを形にして、納得いくまで一人回し。</p></div><button class="btn btn-primary" data-action="new-deck"><span>＋</span> 新しいデッキ</button></div>
+  const catalogUrl = localStorage.getItem(CATALOG_URL_KEY) || "";
+  document.querySelector("#view-decks").innerHTML = `<div class="page-heading"><div><div class="eyebrow">YOUR WORKSPACE</div><h1>デッキ一覧</h1><p>アイデアを形にして、納得いくまで一人回し。</p></div><div class="deck-toolbar"><button class="btn btn-light" data-export-all>↓ JSON書き出し</button><button class="btn btn-light" data-import-json>↑ JSON読み込み</button><button class="btn btn-primary" data-action="new-deck"><span>＋</span> 新しいデッキ</button><input id="deck-json-file" type="file" accept=".json,application/json" hidden /></div></div>
+    <details class="catalog-source"><summary>外部カードカタログ　·　${titles.length}タイトル / ${catalog.length}枚</summary><form id="catalog-source-form" class="catalog-source-form"><input id="catalog-source-url" type="url" placeholder="https://example.com/union-arena/catalog.json" value="${escapeHtml(catalogUrl)}" aria-label="カードカタログJSONのURL" required /><button class="btn btn-light" type="submit">カタログを更新</button></form><p>公開JSONのURLを指定すると、タイトルとカード一覧を追加できます。HTTPS配信とCORS許可が必要です。画像はPNGのURLを指定してください。</p></details>
     <div class="deck-summary">
       <div class="summary-card"><div><div class="summary-label">保存したデッキ</div><div class="summary-value">${decks.length}<small style="font-size:10px;font-weight:500;color:#9aa2ad"> decks</small></div></div><div class="summary-icon">▤</div></div>
       <div class="summary-card"><div><div class="summary-label">構築済みカード</div><div class="summary-value">${totalCards}<small style="font-size:10px;font-weight:500;color:#9aa2ad"> cards</small></div></div><div class="summary-icon">▧</div></div>
@@ -148,7 +348,7 @@ function renderDecks() {
     </div>
     <div class="section-heading"><h2>マイデッキ</h2><span>${decks.length} decks　·　最終更新 ${decks.length ? formatDate(recentDeck) : "—"}</span></div>
     ${decks.length ? `<div class="deck-grid">${deckCards}<button class="deck-card add-deck-card" data-action="new-deck" style="display:grid;place-content:center;justify-items:center;min-height:198px;border-style:dashed;background:transparent;color:#8d97a5"><span style="display:grid;place-items:center;width:37px;height:37px;border:1px solid #e3e6eb;border-radius:50%;font-size:20px">＋</span><span style="margin-top:9px;font-size:10px">デッキを追加</span></button></div>` : `<div class="empty-state"><div class="empty-icon">＋</div><h2>最初のデッキを作ろう</h2><p>カードを選んで、あなたのデッキを組み立てましょう。</p><button class="btn btn-primary" data-action="new-deck">デッキを作る</button></div>`}
-    <p class="rules-note" style="margin-top:19px">このアプリは非公式のデッキ構築・プレイテスト用ツールです。カード名とデータは操作確認用のサンプルです。</p>`;
+    <p class="rules-note" style="margin-top:19px">デッキはこのブラウザーに自動保存されます。バックアップや別の端末への移行にはJSON書き出し・読み込みをご利用ください。カード名とデータは操作確認用のサンプルです。</p>`;
 }
 
 function openBuilder(deckId = null) {
@@ -159,7 +359,7 @@ function openBuilder(deckId = null) {
 }
 
 function createDeck() {
-  const deck = { id: `deck-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: "新しいデッキ", cards: {}, createdAt: Date.now(), updatedAt: Date.now() };
+  const deck = { id: `deck-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`, name: "新しいデッキ", titleId: titles[0]?.id || SAMPLE_TITLE_ID, cards: {}, createdAt: Date.now(), updatedAt: Date.now() };
   decks.unshift(deck);
   editingDeckId = deck.id;
   saveDecks();
@@ -175,9 +375,11 @@ function renderBuilder() {
   }
   const size = deckSize(deck);
   const colors = deckColors(deck);
-  const filtered = CATALOG.filter((card) => (catalogFilter === "all" || card.color === catalogFilter) && `${card.name} ${card.type} ${COLORS[card.color].label}`.toLowerCase().includes(catalogQuery.toLowerCase()));
+  const title = getTitle(deck.titleId);
+  const titleCards = catalog.filter((card) => card.titleId === deck.titleId);
+  const filtered = titleCards.filter((card) => (catalogFilter === "all" || card.color === catalogFilter) && `${card.name} ${card.type} ${COLORS[card.color].label}`.toLowerCase().includes(catalogQuery.toLowerCase()));
   const cardRows = filtered.map((card) => `<div class="catalog-row">
-    <div class="mini-card" style="--card-color:${COLORS[card.color].hex}">${card.symbol}</div>
+    <div class="mini-card" style="--card-color:${COLORS[card.color].hex}">${card.image ? `<img class="catalog-card-image" src="${escapeHtml(card.image)}" alt="" loading="lazy" />` : escapeHtml(card.symbol)}</div>
     <div><p class="card-title">${escapeHtml(card.name)}</p><div class="card-meta"><span>${COLORS[card.color].label}</span><span>${card.type}</span><span>BP ${card.bp || "—"}</span></div></div>
     <span class="card-cost">${card.cost}</span><button class="add-card-btn" data-add-card="${card.id}" aria-label="${escapeHtml(card.name)}を追加">＋</button>
   </div>`).join("");
@@ -196,9 +398,10 @@ function renderBuilder() {
   }, {});
   const distribution = Object.entries(colorParts).map(([color, count]) => `<span style="width:${size ? count / size * 100 : 0}%;background:${COLORS[color].hex}" title="${COLORS[color].label}: ${count}枚"></span>`).join("");
 
-  document.querySelector("#view-builder").innerHTML = `<div class="builder-top"><button class="back-btn" data-view="decks">← デッキ一覧</button><div class="save-indicator">✓ 保存しました</div><div class="builder-title"><input id="deck-name" maxlength="40" value="${escapeHtml(deck.name)}" aria-label="デッキ名" /><span class="deck-color">${colors.map((color) => `<i class="color-dot" style="--dot:${COLORS[color].hex}"></i>`).join("")}</span></div></div>
+  document.querySelector("#view-builder").innerHTML = `<div class="builder-top"><button class="back-btn" data-view="decks">← デッキ一覧</button><div class="save-indicator">✓ 保存しました</div><div class="builder-title"><input id="deck-name" maxlength="40" value="${escapeHtml(deck.name)}" aria-label="デッキ名" /><span class="deck-color">${colors.map((color) => `<i class="color-dot" style="--dot:${COLORS[color].hex}"></i>`).join("")}</span></div>
+    <label class="title-selector-label" for="deck-title">TITLE</label><select id="deck-title" class="select-input title-selector" aria-label="デッキのタイトル">${titles.map((item) => `<option value="${escapeHtml(item.id)}" ${deck.titleId === item.id ? "selected" : ""}>${escapeHtml(item.name)}</option>`).join("")}</select></div>
     <div class="builder-layout">
-      <section class="panel catalog-panel"><div class="panel-head"><h2>カード一覧</h2><span>${filtered.length} cards</span></div>
+      <section class="panel catalog-panel"><div class="panel-head"><h2>登録カード　·　${escapeHtml(title?.name || "タイトル未登録")}</h2><span>${titleCards.length} cards</span></div>
         <div class="catalog-tools"><div class="search-wrap"><input class="search-input" id="catalog-search" placeholder="カード名で検索..." value="${escapeHtml(catalogQuery)}" /></div>
           <select class="select-input" id="color-filter" aria-label="カラーで絞り込み"><option value="all" ${catalogFilter === "all" ? "selected" : ""}>全カラー</option>${Object.entries(COLORS).map(([id, color]) => `<option value="${id}" ${catalogFilter === id ? "selected" : ""}>${color.label}</option>`).join("")}</select>
         </div><div class="catalog-list">${cardRows || `<div class="no-results">該当するカードがありません</div>`}</div>
@@ -239,9 +442,20 @@ function startGame(deckId) {
   }
   const cards = Object.entries(deck.cards).flatMap(([id, count]) => Array(count).fill(id));
   shuffle(cards);
-  game = { deckId, pile: cards, hand: [], field: Array(5).fill(null), trash: [], turn: 1, life: 7, log: [] };
-  for (let i = 0; i < 7; i++) drawCard(false);
-  addLog("ゲーム開始。初期手札を7枚引きました。");
+  game = {
+    deckId,
+    pile: cards.slice(14),
+    lifeCards: cards.slice(0, 7),
+    hand: cards.slice(7, 14),
+    energyLine: Array(3).fill(null),
+    frontLine: Array(3).fill(null),
+    trash: [],
+    removed: [],
+    selectedHandIndex: null,
+    turn: 1,
+    log: [],
+  };
+  addLog("ゲーム開始。ライフ7枚と初期手札7枚をセットしました。");
   setView("play");
 }
 
@@ -269,11 +483,18 @@ function drawCard(log = true) {
   return true;
 }
 
-function cardMarkup(id, index, inField = false) {
+function cardMarkup(id, index, zone = "hand") {
   const card = getCard(id);
   if (!card) return "";
-  return `<button class="play-card" style="--card-color:${COLORS[card.color].hex}" ${inField ? `data-return-card="${index}" title="クリックして手札に戻す"` : `data-play-card="${index}" title="クリックして場に出す"`}>
-    <span class="play-card-cost">${card.cost}</span><span class="play-card-art">${card.symbol}</span><span class="play-card-name">${escapeHtml(card.name)}</span><span class="play-card-type">${COLORS[card.color].label} · BP ${card.bp || "—"}</span>
+  const image = card.image
+    ? `<img class="play-card-image" src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}" loading="lazy" />`
+    : `<span class="play-card-art">${escapeHtml(card.symbol)}</span>`;
+  const selected = zone === "hand" && game.selectedHandIndex === index;
+  const action = zone === "hand"
+    ? `data-select-card="${index}" aria-pressed="${selected}"`
+    : `data-return-card="${zone}:${index}" title="クリックして手札に戻す"`;
+  return `<button class="play-card ${selected ? "selected" : ""}" style="--card-color:${COLORS[card.color].hex}" ${action}>
+    <span class="play-card-cost">${card.cost}</span>${image}<span class="play-card-name">${escapeHtml(card.name)}</span><span class="play-card-type">${COLORS[card.color].label} · BP ${card.bp || "—"}</span>
   </button>`;
 }
 
@@ -282,25 +503,45 @@ function renderPlay() {
   if (!game) {
     const available = decks.filter((deck) => deckSize(deck) > 0);
     el.innerHTML = `<div class="page-heading play-heading"><div><div class="eyebrow">SOLO PLAYTEST</div><h1>一人回し</h1><p>手札の感触を確かめて、次の一手を見つけよう。</p></div></div>
-      ${available.length ? `<div class="setup-state"><div class="setup-icon">▷</div><h2>デッキを選んでスタート</h2><p>山札をシャッフルして初期手札を引きます。カードを場に出したり、ターンを進めたりして動きを試せます。</p><select id="play-deck-select" class="select-input setup-select">${available.map((deck) => `<option value="${escapeHtml(deck.id)}">${escapeHtml(deck.name)}　(${deckSize(deck)}枚)</option>`).join("")}</select><button class="btn btn-coral" data-start-selected>▷　ゲームを始める</button></div>` : `<div class="setup-state"><div class="setup-icon">▤</div><h2>デッキがありません</h2><p>まずはデッキを作ってカードを入れましょう。</p><button class="btn btn-coral" data-action="new-deck">デッキを作る</button></div>`}
-      <p class="rules-note" style="margin-top:15px">一人回し用の簡易プレイエリアです。ターン進行やエナジー等のルール処理は自動化していません。</p>`;
+      ${available.length ? `<div class="setup-state"><div class="setup-icon">▷</div><h2>デッキを選んでスタート</h2><p>シャッフル後、ライフ7枚と初期手札7枚をセットします。エナジーラインやフロントラインへの移動も試せます。</p><select id="play-deck-select" class="select-input setup-select">${available.map((deck) => `<option value="${escapeHtml(deck.id)}">${escapeHtml(deck.name)}　(${deckSize(deck)}枚)</option>`).join("")}</select><button class="btn btn-coral" data-start-selected>▷　ゲームを始める</button></div>` : `<div class="setup-state"><div class="setup-icon">▤</div><h2>デッキがありません</h2><p>まずはデッキを作ってカードを入れましょう。</p><button class="btn btn-coral" data-action="new-deck">デッキを作る</button></div>`}
+      <p class="rules-note" style="margin-top:15px">公式の主要エリア配置を参考にした一人回し用盤面です。AP・エナジーの支払い、効果、バトル等のルール処理は行わないため、実際の対戦では公式ルールをご確認ください。</p>`;
     return;
   }
   const deck = findDeck(game.deckId);
   const hand = game.hand.map((id, index) => cardMarkup(id, index)).join("");
-  const field = game.field.map((id, index) => id ? `<div class="field-slot filled">${cardMarkup(id, index, true)}</div>` : `<div class="field-slot">空きスペース</div>`).join("");
+  const renderSlots = (zone) => game[zone].map((id, index) => id
+    ? `<div class="field-slot filled">${cardMarkup(id, index, zone)}</div>`
+    : `<div class="field-slot">空きスペース</div>`).join("");
+  const lifeStack = game.lifeCards.length
+    ? `<button class="zone-stack life-stack" data-life-damage aria-label="ライフから1枚を手札に加える"><span class="stack-card"></span><span class="stack-count">${game.lifeCards.length}</span><small>ダメージ</small></button>`
+    : `<div class="zone-stack empty-stack"><span class="stack-count">0</span><small>ライフなし</small></div>`;
+  const selectedCard = game.selectedHandIndex === null ? null : getCard(game.hand[game.selectedHandIndex]);
+  const selected = game.selectedHandIndex !== null && game.hand[game.selectedHandIndex] !== undefined;
   const log = game.log.length ? game.log.map((item) => `<div class="log-item"><span class="log-time">${item.time}</span><span>${escapeHtml(item.message)}</span></div>`).join("") : `<div class="no-results">まだ操作はありません</div>`;
-  el.innerHTML = `<div class="page-heading play-heading"><div><div class="eyebrow">SOLO PLAYTEST</div><h1>一人回し</h1><p>カードをクリックして場に出す・手札に戻すことができます。</p></div><button class="btn btn-light" data-end-game>← 終了する</button></div>
+  const image = selectedCard?.image
+    ? `<img class="play-card-image" src="${escapeHtml(selectedCard.image)}" alt="${escapeHtml(selectedCard.name)}" loading="lazy" />`
+    : "";
+  el.innerHTML = `<div class="page-heading play-heading"><div><div class="eyebrow">SOLO PLAYTEST</div><h1>一人回し</h1><p>手札のカードを選び、移動先のエリアに配置できます。</p></div><button class="btn btn-light" data-end-game>← 終了する</button></div>
     <div class="play-layout"><section class="play-table">
       <div class="play-table-top"><div><h2>${escapeHtml(deck?.name || "プレイ中のデッキ")}</h2><p>山札 ${game.pile.length} 枚　·　トラッシュ ${game.trash.length} 枚</p></div><span class="round-badge">TURN ${game.turn}</span></div>
-      <div class="zone-label">HAND <span>${game.hand.length} 枚　·　カードをクリックして場へ</span></div>
+      <div class="utility-zones">
+        <button class="zone-stack deck-stack" data-draw aria-label="山札から1枚ドロー"><span class="stack-card"></span><span class="stack-count">${game.pile.length}</span><small>山札 · ドロー</small></button>
+        <div class="utility-zone life-zone"><span class="utility-title">LIFE <small>ライフエリア</small></span>${lifeStack}</div>
+        <div class="utility-zone ap-zone"><span class="utility-title">AP <small>APエリア</small></span><div class="ap-cards">${[1, 2, 3].map((item) => `<span class="ap-card" aria-label="APカード ${item}">${item}</span>`).join("")}</div></div>
+        <div class="utility-zone small-pile"><span class="utility-title">TRASH <small>トラッシュ</small></span><strong>${game.trash.length}</strong><small>枚</small></div>
+        <div class="utility-zone small-pile"><span class="utility-title">REMOVED <small>退場エリア</small></span><strong>${game.removed.length}</strong><small>枚</small></div>
+      </div>
+      <div class="zone-label">ENERGY LINE <span>${game.energyLine.filter(Boolean).length} / 3　·　エナジーエリア</span></div>
+      <div class="field-zone energy-zone">${renderSlots("energyLine")}</div>
+      <div class="zone-label">FRONT LINE <span>${game.frontLine.filter(Boolean).length} / 3　·　フロントライン</span></div>
+      <div class="field-zone front-zone">${renderSlots("frontLine")}</div>
+      <div class="zone-label">HAND <span>${game.hand.length} 枚　·　カードを選択</span></div>
       <div class="hand-zone">${hand || `<span class="empty-zone">手札がありません。ドローしてみましょう。</span>`}</div>
-      <div class="zone-label">FIELD <span>カードをクリックして手札に戻す</span></div><div class="field-zone">${field}</div>
-      <div class="play-controls"><div class="control-group"><button class="btn btn-light" data-draw>＋ 1枚ドロー</button><button class="btn btn-light" data-draw-multiple>＋＋ 2枚ドロー</button><button class="btn btn-light" data-mulligan>↻ マリガン</button></div><div class="control-group"><button class="btn btn-coral" data-next-turn>次のターン →</button></div></div>
+      <div class="play-controls"><div class="control-group"><button class="btn btn-light" data-place-zone="energyLine" ${selected ? "" : "disabled"}>${selectedCard ? `↓ ${escapeHtml(selectedCard.name)}をエナジーへ` : "↓ エナジーラインへ"}</button><button class="btn btn-coral" data-place-zone="frontLine" ${selected ? "" : "disabled"}>${selectedCard ? `↑ ${escapeHtml(selectedCard.name)}をフロントへ` : "↑ フロントラインへ"}</button><button class="btn btn-light" data-discard-selected ${selected ? "" : "disabled"}>トラッシュへ</button></div><div class="control-group"><button class="btn btn-light" data-draw-multiple>＋＋ 2枚ドロー</button><button class="btn btn-light" data-mulligan>↻ マリガン</button><button class="btn btn-coral" data-next-turn>次のターン →</button></div></div>
     </section>
-    <aside class="game-sidebar"><section class="game-panel"><h3>ゲーム情報</h3><div class="game-stat"><span>ターン</span><strong>${game.turn}</strong></div><div class="game-stat"><span>山札</span><strong>${game.pile.length} 枚</strong></div><div class="game-stat"><span>手札</span><strong>${game.hand.length} 枚</strong></div><div class="game-stat"><span>ライフ（メモ）</span><div class="life-controls"><button data-life="-1" aria-label="ライフを減らす">−</button><strong>${game.life}</strong><button data-life="1" aria-label="ライフを増やす">＋</button></div></div></section>
+    <aside class="game-sidebar"><section class="game-panel"><h3>ゲーム情報</h3><div class="game-stat"><span>ターン</span><strong>${game.turn}</strong></div><div class="game-stat"><span>山札</span><strong>${game.pile.length} 枚</strong></div><div class="game-stat"><span>手札</span><strong>${game.hand.length} 枚</strong></div><div class="game-stat"><span>ライフ</span><strong>${game.lifeCards.length} / 7 枚</strong></div><div class="game-stat"><span>選択中</span><strong>${selectedCard ? escapeHtml(selectedCard.name) : "—"}</strong></div></section>
       <section class="game-panel"><h3>プレイログ</h3><div class="game-log">${log}</div></section>
-      <div class="rules-note">カードを場に出すには、手札のカードをクリック。場のカードをクリックすると手札に戻ります。マリガンは手札を山札に戻してシャッフルします。</div>
+      <div class="rules-note">手札のカードを選択してから移動先を選びます。場のカードをクリックすると手札に戻ります。山札からのドローとライフからのダメージ移動は各エリアをクリックします。エナジー・APの支払いは手動です。</div>
     </aside></div>`;
 }
 
@@ -311,6 +552,20 @@ document.addEventListener("click", (event) => {
   if (target.dataset.action === "new-deck") { createDeck(); return; }
   if (target.dataset.openDeck) { openBuilder(target.dataset.openDeck); return; }
   if (target.dataset.editDeck) { openBuilder(target.dataset.editDeck); return; }
+  if (target.hasAttribute("data-export-all")) {
+    const date = new Date().toISOString().slice(0, 10);
+    downloadDecks(decks, `union-deck-lab-${date}`);
+    return;
+  }
+  if (target.dataset.exportDeck) {
+    const deck = findDeck(target.dataset.exportDeck);
+    if (deck) downloadDecks([deck], (deck.name || "deck").replace(/[<>:"/\\|?*\x00-\x1f]/g, "_").trim() || "deck");
+    return;
+  }
+  if (target.hasAttribute("data-import-json")) {
+    document.querySelector("#deck-json-file").click();
+    return;
+  }
   if (target.dataset.addCard) { changeCard(editingDeckId, target.dataset.addCard, 1); return; }
   if (target.dataset.removeCard) { changeCard(editingDeckId, target.dataset.removeCard, -1); return; }
   if (target.dataset.duplicateDeck) {
@@ -335,6 +590,14 @@ document.addEventListener("click", (event) => {
     return;
   }
   if (target.hasAttribute("data-draw")) { drawCard(); renderPlay(); return; }
+  if (target.hasAttribute("data-life-damage")) {
+    const id = game.lifeCards.pop();
+    if (!id) { showToast("ライフエリアにカードがありません。"); return; }
+    game.hand.push(id);
+    game.selectedHandIndex = game.hand.length - 1;
+    addLog(`${getCard(id).name}をライフエリアから手札に加えました。`);
+    renderPlay(); return;
+  }
   if (target.hasAttribute("data-draw-multiple")) {
     let drawn = 0;
     for (let i = 0; i < 2 && drawCard(false); i++) drawn++;
@@ -346,6 +609,7 @@ document.addEventListener("click", (event) => {
     if (!count) { showToast("戻す手札がありません。"); return; }
     game.pile.push(...game.hand);
     game.hand = [];
+    game.selectedHandIndex = null;
     shuffle(game.pile);
     let drawn = 0;
     for (let i = 0; i < count && drawCard(false); i++) drawn++;
@@ -359,28 +623,43 @@ document.addEventListener("click", (event) => {
     renderPlay(); return;
   }
   if (target.hasAttribute("data-end-game")) { game = null; renderPlay(); return; }
-  if (target.dataset.playCard !== undefined) {
-    const handIndex = Number(target.dataset.playCard);
-    const emptyIndex = game.field.findIndex((card) => card === null);
-    if (emptyIndex < 0) { showToast("場に空きスペースがありません。"); return; }
-    const [id] = game.hand.splice(handIndex, 1);
+  if (target.dataset.selectCard !== undefined) {
+    const handIndex = Number(target.dataset.selectCard);
+    game.selectedHandIndex = game.selectedHandIndex === handIndex ? null : handIndex;
+    renderPlay(); return;
+  }
+  if (target.dataset.placeZone) {
+    const zone = target.dataset.placeZone;
+    if (!["energyLine", "frontLine"].includes(zone) || game.selectedHandIndex === null) return;
+    const emptyIndex = game[zone].findIndex((card) => card === null);
+    if (emptyIndex < 0) { showToast(`${zone === "energyLine" ? "エナジーライン" : "フロントライン"}に空きがありません。`); return; }
+    const [id] = game.hand.splice(game.selectedHandIndex, 1);
     if (!id) return;
-    game.field[emptyIndex] = id;
-    addLog(`${getCard(id).name}を場に出しました。`);
+    game[zone][emptyIndex] = id;
+    game.selectedHandIndex = null;
+    addLog(`${getCard(id).name}を${zone === "energyLine" ? "エナジーライン" : "フロントライン"}に置きました。`);
+    renderPlay(); return;
+  }
+  if (target.hasAttribute("data-discard-selected")) {
+    if (game.selectedHandIndex === null) return;
+    const [id] = game.hand.splice(game.selectedHandIndex, 1);
+    if (!id) return;
+    game.trash.push(id);
+    game.selectedHandIndex = null;
+    addLog(`${getCard(id).name}をトラッシュに置きました。`);
     renderPlay(); return;
   }
   if (target.dataset.returnCard !== undefined) {
-    const fieldIndex = Number(target.dataset.returnCard);
-    const [id] = game.field.splice(fieldIndex, 1);
-    game.field.splice(fieldIndex, 0, null);
+    const [zone, indexText] = target.dataset.returnCard.split(":");
+    if (!["energyLine", "frontLine"].includes(zone)) return;
+    const fieldIndex = Number(indexText);
+    const id = game[zone][fieldIndex];
     if (!id) return;
+    game[zone][fieldIndex] = null;
     game.hand.push(id);
-    addLog(`${getCard(id).name}を手札に戻しました。`);
+    game.selectedHandIndex = game.hand.length - 1;
+    addLog(`${getCard(id).name}を場から手札に戻しました。`);
     renderPlay(); return;
-  }
-  if (target.dataset.life) {
-    game.life = Math.max(0, game.life + Number(target.dataset.life));
-    renderPlay();
   }
 });
 
@@ -411,9 +690,38 @@ document.addEventListener("change", (event) => {
     catalogFilter = event.target.value;
     renderBuilder();
   }
+  if (event.target.id === "deck-title") {
+    const deck = findDeck(editingDeckId);
+    const nextTitle = getTitle(event.target.value);
+    if (!deck || !nextTitle || nextTitle.id === deck.titleId) return;
+    const incompatible = Object.keys(deck.cards).filter((cardId) => getCard(cardId)?.titleId !== nextTitle.id);
+    if (incompatible.length && !window.confirm(`タイトルを変更すると、現在のカード${incompatible.reduce((sum, id) => sum + deck.cards[id], 0)}枚をデッキから外します。続けますか？`)) {
+      renderBuilder();
+      return;
+    }
+    deck.cards = Object.fromEntries(Object.entries(deck.cards).filter(([cardId]) => getCard(cardId)?.titleId === nextTitle.id));
+    deck.titleId = nextTitle.id;
+    deck.updatedAt = Date.now();
+    saveDecks();
+    renderBuilder();
+  }
+  if (event.target.id === "deck-json-file") {
+    const [file] = event.target.files;
+    if (file) importDeckFile(file);
+    event.target.value = "";
+  }
+});
+
+document.addEventListener("submit", (event) => {
+  if (event.target.id !== "catalog-source-form") return;
+  event.preventDefault();
+  const sourceUrl = document.querySelector("#catalog-source-url").value.trim();
+  if (sourceUrl) refreshCatalog(sourceUrl, true);
 });
 
 document.querySelectorAll(".nav-item").forEach((item) => item.addEventListener("click", () => setView(item.dataset.view)));
 renderSidebarDecks();
 renderDecks();
 renderPlay();
+const savedCatalogUrl = localStorage.getItem(CATALOG_URL_KEY);
+if (savedCatalogUrl) refreshCatalog(savedCatalogUrl);

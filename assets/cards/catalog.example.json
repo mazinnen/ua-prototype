@@ -1,0 +1,23 @@
+{
+  "format": "union-deck-lab-catalog",
+  "version": 1,
+  "titles": [
+    {
+      "id": "blue-lock",
+      "name": "ブルーロック"
+    }
+  ],
+  "cards": [
+    {
+      "id": "ua-bl-001",
+      "titleId": "blue-lock",
+      "name": "カード名",
+      "color": "blue",
+      "cost": 1,
+      "bp": 2000,
+      "type": "キャラクター",
+      "symbol": "例",
+      "image": "cards/blue-lock/ua-bl-001.png"
+    }
+  ]
+}
