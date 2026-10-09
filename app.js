@@ -529,11 +529,16 @@ function startGame(deckId) {
     pile: cards.slice(14),
     lifeCards: cards.slice(0, 7),
     hand: cards.slice(7, 14),
-    energyLine: Array(3).fill(null),
-    frontLine: Array(3).fill(null),
+    energyLine: Array(4).fill(null),
+    frontLine: Array(4).fill(null),
     trash: [],
     removed: [],
+    rotated: {},
+    raidStacks: {},
     selectedHandIndex: null,
+    peeked: null,
+    peekOriginal: null,
+    dialogMode: null,
     turn: 1,
     log: [],
   };
@@ -565,7 +570,7 @@ function drawCard(log = true) {
   return true;
 }
 
-function cardMarkup(id, index, zone = "hand") {
+function cardMarkup(id, index, zone = "hand", layer = 0) {
   const card = getCard(id);
   if (!card) return "";
   const image = card.image
@@ -574,10 +579,295 @@ function cardMarkup(id, index, zone = "hand") {
   const selected = zone === "hand" && game.selectedHandIndex === index;
   const action = zone === "hand"
     ? `data-select-card="${index}" aria-pressed="${selected}"`
-    : `data-return-card="${zone}:${index}" title="クリックして手札に戻す"`;
-  return `<button class="play-card ${selected ? "selected" : ""}" style="--card-color:${COLORS[card.color].hex}" ${action}>
+    : `data-return-card="${zone}:${index}:${layer}" title="クリックして手札に戻す。別のエリアへドラッグできます" aria-label="${escapeHtml(card.name)}。右クリックで縦横切替"`;
+  const dragSource = zone === "hand" ? `hand:${index}` : `field:${zone}:${index}:${layer}`;
+  const rotated = zone !== "hand" && game.rotated[`${zone}:${index}`];
+  return `<button class="play-card ${selected ? "selected" : ""} ${rotated ? "rotated" : ""}" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${Math.max(0, (game.raidStacks[`${zone}:${index}`] || []).length - layer)}" draggable="true" data-drag-source="${dragSource}" ${action}>
     <span class="play-card-cost">${card.cost}</span>${image}<span class="play-card-name">${escapeHtml(card.name)}</span><span class="play-card-type">${COLORS[card.color].label} · BP ${card.bp || "—"}</span>
   </button>`;
+}
+
+function renderGameDialog() {
+  if (!game?.dialogMode) return "";
+  if (game.dialogMode === "peek-count") {
+    return `<dialog id="game-dialog" class="game-dialog">
+      <div class="game-dialog-head"><div><p>DECK TOP</p><h2>山札を見る</h2></div><button class="card-preview-close" data-close-game-dialog aria-label="閉じる">×</button></div>
+      <p class="game-dialog-note">山札の上から確認する枚数を指定してください。山札は ${game.pile.length} 枚です。</p>
+      <label class="peek-count-label" for="peek-count">確認する枚数</label><input id="peek-count" class="search-input peek-count-input" type="number" min="1" max="${game.pile.length}" value="${Math.min(5, game.pile.length)}" />
+      <div class="game-dialog-actions"><button class="btn btn-light" data-close-game-dialog>キャンセル</button><button class="btn btn-coral" data-confirm-peek ${game.pile.length ? "" : "disabled"}>山札を見る</button></div>
+    </dialog>`;
+  }
+  if (game.dialogMode === "peek-cards") {
+    const destinations = [["top", "山札の上"], ["bottom", "山札の下"], ["hand", "手札"], ["life", "ライフ"], ["energy", "エナジーライン"], ["front", "フロントライン"], ["trash", "トラッシュ"], ["removed", "リムーブ"]];
+    const cards = game.peeked.map((item, index) => {
+      const card = getCard(item.id);
+      return `<div class="game-dialog-card">
+        ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="" />` : `<span class="game-dialog-card-symbol">${escapeHtml(card?.symbol || "?")}</span>`}
+        <div class="game-dialog-card-name"><strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || item.id)}</small></div>
+        <select class="select-input" data-peek-destination="${index}" aria-label="${escapeHtml(card?.name || "カード")}の移動先">${destinations.map(([value, label]) => `<option value="${value}" ${item.destination === value ? "selected" : ""}>${label}</option>`).join("")}</select>
+        <div class="game-dialog-reorder"><button data-peek-move="${index}:up" aria-label="上へ移動" ${index === 0 ? "disabled" : ""}>↑</button><button data-peek-move="${index}:down" aria-label="下へ移動" ${index === game.peeked.length - 1 ? "disabled" : ""}>↓</button></div>
+      </div>`;
+    }).join("");
+    return `<dialog id="game-dialog" class="game-dialog game-dialog-wide">
+      <div class="game-dialog-head"><div><p>DECK TOP · ${game.peeked.length} CARDS</p><h2>確認したカードの順番と移動先</h2></div><button class="card-preview-close" data-close-game-dialog aria-label="閉じる">×</button></div>
+      <p class="game-dialog-note">上から順に並んでいます。矢印で順番を変え、各カードの移動先を選んでください。</p>
+      <div class="game-dialog-card-list">${cards}</div>
+      <div class="game-dialog-actions"><button class="btn btn-light" data-close-game-dialog>戻す</button><button class="btn btn-coral" data-finish-peek>移動を確定</button></div>
+    </dialog>`;
+  }
+  if (game.dialogMode === "trash" || game.dialogMode === "removed") {
+    const source = game.dialogMode;
+    const sourceName = source === "trash" ? "トラッシュ" : "リムーブエリア";
+    const cards = game[source];
+    const destinations = [
+      ["hand", "手札"], ["life", "ライフ"], ["energy", "エナジーライン"], ["front", "フロントライン"],
+      ["top", "山札の上"], ["bottom", "山札の下"],
+      ...(source === "trash" ? [["removed", "リムーブ"]] : [["trash", "トラッシュ"]]),
+    ];
+    const rows = cards.map((id, index) => {
+      const card = getCard(id);
+      return `<div class="game-dialog-card">
+        ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="" />` : `<span class="game-dialog-card-symbol">${escapeHtml(card?.symbol || "?")}</span>`}
+        <div class="game-dialog-card-name"><strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || id)}</small></div>
+        <div class="game-dialog-move-actions">${destinations.map(([destination, label]) => `<button class="btn btn-light" data-zone-move="${source}:${index}:${destination}">${label}</button>`).join("")}</div>
+      </div>`;
+    }).join("");
+    return `<dialog id="game-dialog" class="game-dialog game-dialog-wide">
+      <div class="game-dialog-head"><div><p>PLAYER ZONE · ${cards.length} CARDS</p><h2>${sourceName}のカード</h2></div><button class="card-preview-close" data-close-game-dialog aria-label="閉じる">×</button></div>
+      ${cards.length ? `<div class="game-dialog-card-list">${rows}</div>` : `<p class="game-dialog-empty">${sourceName}にカードはありません。</p>`}
+    </dialog>`;
+  }
+  return "";
+}
+
+function openGameDialog(mode) {
+  game.dialogMode = mode;
+  renderPlay();
+  document.querySelector("#game-dialog")?.showModal();
+}
+
+function closeGameDialog(restorePeek = true) {
+  if (!game) return;
+  document.querySelector("#game-dialog")?.close();
+  if (restorePeek && game.peeked) game.pile.push(...game.peekOriginal.slice().reverse());
+  game.peeked = null;
+  game.peekOriginal = null;
+  game.dialogMode = null;
+  renderPlay();
+}
+
+function confirmPeek() {
+  const count = Number(document.querySelector("#peek-count")?.value);
+  if (!Number.isInteger(count) || count < 1 || count > game.pile.length) {
+    showToast(`確認する枚数は1〜${game.pile.length}枚で指定してください。`);
+    return;
+  }
+  game.peekOriginal = [];
+  for (let i = 0; i < count; i++) game.peekOriginal.push(game.pile.pop());
+  game.peeked = game.peekOriginal.map((id) => ({ id, destination: "top" }));
+  game.dialogMode = "peek-cards";
+  renderPlay();
+  document.querySelector("#game-dialog")?.showModal();
+}
+
+function finishPeek() {
+  if (!game?.peeked) return;
+  const energyCount = game.peeked.filter((item) => item.destination === "energy").length;
+  const frontCount = game.peeked.filter((item) => item.destination === "front").length;
+  if (energyCount > game.energyLine.filter((id) => !id).length) {
+    showToast("エナジーラインの空きが足りません。移動先を変更してください。");
+    return;
+  }
+  if (frontCount > game.frontLine.filter((id) => !id).length) {
+    showToast("フロントラインの空きが足りません。移動先を変更してください。");
+    return;
+  }
+  const destinations = new Map([
+    ["top", []], ["bottom", []], ["hand", []], ["life", []], ["energy", []], ["front", []], ["trash", []], ["removed", []],
+  ]);
+  for (const item of game.peeked) destinations.get(item.destination)?.push(item.id);
+  game.pile.push(...destinations.get("top").slice().reverse());
+  game.pile.unshift(...destinations.get("bottom").slice().reverse());
+  game.hand.push(...destinations.get("hand"));
+  game.lifeCards.push(...destinations.get("life"));
+  game.trash.push(...destinations.get("trash"));
+  game.removed.push(...destinations.get("removed"));
+  for (const zone of ["energy", "front"]) {
+    const line = zone === "energy" ? game.energyLine : game.frontLine;
+    for (const id of destinations.get(zone)) {
+      const index = line.findIndex((slot) => !slot);
+      delete game.rotated[`${zone === "energy" ? "energyLine" : "frontLine"}:${index}`];
+      line[index] = id;
+    }
+  }
+  const movedCount = game.peeked.length;
+  game.peeked = null;
+  game.peekOriginal = null;
+  game.dialogMode = null;
+  addLog(`山札を${movedCount}枚確認し、移動先を選びました。`);
+  renderPlay();
+}
+
+function moveZoneCard(source, index, destination) {
+  if (!game || !["trash", "removed"].includes(source)) return;
+  const cardId = game[source][index];
+  if (!cardId) return;
+  if (destination === "energy" || destination === "front") {
+    const line = destination === "energy" ? game.energyLine : game.frontLine;
+    const emptyIndex = line.findIndex((slot) => !slot);
+    if (emptyIndex < 0) {
+      showToast(`${destination === "energy" ? "エナジーライン" : "フロントライン"}に空きがありません。`);
+      return;
+    }
+    game[source].splice(index, 1);
+    delete game.rotated[`${destination === "energy" ? "energyLine" : "frontLine"}:${emptyIndex}`];
+    line[emptyIndex] = cardId;
+  } else if (destination === "hand") {
+    game[source].splice(index, 1);
+    game.hand.push(cardId);
+  } else if (destination === "life") {
+    game[source].splice(index, 1);
+    game.lifeCards.push(cardId);
+  } else if (destination === "top") {
+    game[source].splice(index, 1);
+    game.pile.push(cardId);
+  } else if (destination === "bottom") {
+    game[source].splice(index, 1);
+    game.pile.unshift(cardId);
+  } else if ((source === "trash" && destination === "removed")
+    || (source === "removed" && destination === "trash")) {
+    game[source].splice(index, 1);
+    game[destination].push(cardId);
+  } else {
+    return;
+  }
+  game.dialogMode = source;
+  addLog(`${getCard(cardId)?.name || "カード"}を${source === "trash" ? "トラッシュ" : "リムーブ"}から移動しました。`);
+  renderPlay();
+  document.querySelector("#game-dialog")?.showModal();
+}
+
+function renderFieldSlot(zone, index) {
+  const id = game[zone][index];
+  const slot = `${zone}:${index}`;
+  const overlays = game.raidStacks?.[slot] || [];
+  if (!id) return `<div class="field-slot" data-drop-zone="field:${zone}:${index}">空きスペース</div>`;
+  const stack = [id, ...overlays];
+  const cards = stack.map((cardId, layer) => {
+    if (layer === stack.length - 1) return cardMarkup(cardId, index, zone, layer);
+    const card = getCard(cardId);
+    if (!card) return "";
+    return `<div class="play-card raid-underlay" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${stack.length - layer - 1}">
+      ${card.image ? `<img class="play-card-image" src="${escapeHtml(card.image)}" alt="" loading="lazy" />` : `<span class="play-card-art">${escapeHtml(card.symbol)}</span>`}
+      <span class="play-card-name">${escapeHtml(card.name)}</span>
+    </div>`;
+  }).join("");
+  return `<div class="field-slot filled ${stack.length > 1 ? "raid-stacked" : ""}" data-drop-zone="field:${zone}:${index}">
+    <div class="field-card-stack" style="--stack-size:${stack.length}">${cards}</div>${stack.length > 1 ? `<span class="raid-stack-count" title="${stack.length}枚を重ねています">重ね ${stack.length}</span>` : ""}
+  </div>`;
+}
+
+function moveGameCard(sourceValue, destinationValue) {
+  if (!game) return false;
+  const source = sourceValue.split(":");
+  const destination = destinationValue.split(":");
+  let cardId;
+  let rotation = false;
+  let destinationField = null;
+
+  if (destination[0] === "field") {
+    const [zone, index] = [destination[1], Number(destination[2])];
+    const line = game[zone];
+    if (!["frontLine", "energyLine"].includes(zone) || !Number.isInteger(index) || !line || index < 0 || index >= line.length) return false;
+    if (source[0] === "field" && source[1] === zone && Number(source[2]) === index) return false;
+    const occupied = Boolean(line[index]);
+    if (occupied && zone !== "frontLine") {
+      showToast("カードを重ねられるのはフロントラインです。");
+      return false;
+    }
+    destinationField = { zone, index, occupied };
+  }
+
+  const [sourceType, sourceZone, sourceIndexText, sourceLayerText] = source;
+  const index = Number(["hand", "trash", "removed"].includes(sourceType) ? sourceZone : sourceIndexText);
+  if (sourceType === "hand" && Number.isInteger(index)) {
+    cardId = game.hand[index];
+  } else if (sourceType === "life" && sourceZone === "top") {
+    cardId = game.lifeCards[game.lifeCards.length - 1];
+  } else if (sourceType === "pile" && sourceZone === "top") {
+    cardId = game.pile[game.pile.length - 1];
+  } else if (sourceType === "field" && ["frontLine", "energyLine"].includes(sourceZone)) {
+    const line = game[sourceZone];
+    const slotIndex = Number(sourceIndexText);
+    const layer = Number(sourceLayerText);
+    const overlays = game.raidStacks?.[`${sourceZone}:${slotIndex}`] || [];
+    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= line.length || !Number.isInteger(layer) || layer < 0) return false;
+    if (overlays.length !== layer) return false;
+    cardId = layer === 0 ? line[slotIndex] : overlays[layer - 1];
+    rotation = Boolean(game.rotated[`${sourceZone}:${slotIndex}`]);
+  } else if ((sourceType === "trash" || sourceType === "removed") && Number.isInteger(index)) {
+    cardId = game[sourceType][index];
+  } else {
+    return false;
+  }
+  if (!cardId) return false;
+
+  const validDestination = ["hand", "life", "trash", "removed", "pile-top", "pile-bottom"].includes(destinationValue)
+    || Boolean(destinationField);
+  if (!validDestination) return false;
+
+  if (sourceType === "hand") {
+    game.hand.splice(index, 1);
+    if (game.selectedHandIndex === index) game.selectedHandIndex = null;
+    else if (game.selectedHandIndex > index) game.selectedHandIndex--;
+  } else if (sourceType === "life") game.lifeCards.pop();
+  else if (sourceType === "pile") game.pile.pop();
+  else if (sourceType === "trash" || sourceType === "removed") game[sourceType].splice(index, 1);
+  else if (sourceType === "field") {
+    const line = game[sourceZone];
+    const slotIndex = Number(sourceIndexText);
+    const layer = Number(sourceLayerText);
+    const overlays = game.raidStacks?.[`${sourceZone}:${slotIndex}`] || [];
+    if (layer > 0) {
+      overlays.pop();
+      if (!overlays.length) delete game.raidStacks[`${sourceZone}:${slotIndex}`];
+    } else line[slotIndex] = null;
+    if (!line[slotIndex]) delete game.rotated[`${sourceZone}:${slotIndex}`];
+  }
+
+  if (destinationField) {
+    const { zone, index: targetIndex, occupied } = destinationField;
+    if (occupied) {
+      const slot = `${zone}:${targetIndex}`;
+      if (!game.raidStacks[slot]) game.raidStacks[slot] = [];
+      game.raidStacks[slot].push(cardId);
+      if (rotation) game.rotated[slot] = true;
+      addLog(`${getCard(cardId).name}をフロントラインのカードに重ねました。`);
+    } else {
+      game[zone][targetIndex] = cardId;
+      if (rotation) game.rotated[`${zone}:${targetIndex}`] = true;
+      addLog(`${getCard(cardId).name}を${zone === "energyLine" ? "エナジーライン" : "フロントライン"}に移動しました。`);
+    }
+  } else if (destinationValue === "hand") {
+    game.hand.push(cardId);
+    if (sourceType === "field") game.selectedHandIndex = game.hand.length - 1;
+    addLog(`${getCard(cardId).name}を手札に移動しました。`);
+  } else if (destinationValue === "life") {
+    game.lifeCards.push(cardId);
+    addLog(`${getCard(cardId).name}をライフに移動しました。`);
+  } else if (destinationValue === "trash" || destinationValue === "removed") {
+    game[destinationValue].push(cardId);
+    addLog(`${getCard(cardId).name}を${destinationValue === "trash" ? "トラッシュ" : "リムーブ"}に移動しました。`);
+  } else if (destinationValue === "pile-top") {
+    game.pile.push(cardId);
+    addLog(`${getCard(cardId).name}を山札の上に戻しました。`);
+  } else if (destinationValue === "pile-bottom") {
+    game.pile.unshift(cardId);
+    addLog(`${getCard(cardId).name}を山札の下に置きました。`);
+  }
+
+  renderPlay();
+  return true;
 }
 
 function renderPlay() {
@@ -586,52 +876,74 @@ function renderPlay() {
     const available = decks.filter((deck) => deckSize(deck) > 0);
     el.innerHTML = `<div class="page-heading play-heading"><div><div class="eyebrow">SOLO PLAYTEST</div><h1>一人回し</h1><p>手札の感触を確かめて、次の一手を見つけよう。</p></div></div>
       ${available.length ? `<div class="setup-state"><div class="setup-icon">▷</div><h2>デッキを選んでスタート</h2><p>シャッフル後、ライフ7枚と初期手札7枚をセットします。エナジーラインやフロントラインへの移動も試せます。</p><select id="play-deck-select" class="select-input setup-select">${available.map((deck) => `<option value="${escapeHtml(deck.id)}">${escapeHtml(deck.name)}　(${deckSize(deck)}枚)</option>`).join("")}</select><button class="btn btn-coral" data-start-selected>▷　ゲームを始める</button></div>` : `<div class="setup-state"><div class="setup-icon">▤</div><h2>デッキがありません</h2><p>まずはデッキを作ってカードを入れましょう。</p><button class="btn btn-coral" data-action="new-deck">デッキを作る</button></div>`}
-      <p class="rules-note" style="margin-top:15px">公式の主要エリア配置を参考にした一人回し用盤面です。AP・エナジーの支払い、効果、バトル等のルール処理は行わないため、実際の対戦では公式ルールをご確認ください。</p>`;
+      <p class="rules-note" style="margin-top:15px">一人回し用の盤面です。AP・エナジーの支払い、効果、バトル等のルール処理は行わないため、実際の対戦では公式ルールをご確認ください。</p>`;
     return;
   }
   const deck = findDeck(game.deckId);
   const hand = game.hand.map((id, index) => cardMarkup(id, index)).join("");
-  const renderSlots = (zone) => game[zone].map((id, index) => id
-    ? `<div class="field-slot filled">${cardMarkup(id, index, zone)}</div>`
-    : `<div class="field-slot">空きスペース</div>`).join("");
+  const renderSlots = (zone) => game[zone].map((_, index) => renderFieldSlot(zone, index)).join("");
   const lifeStack = game.lifeCards.length
-    ? `<button class="zone-stack life-stack" data-life-damage aria-label="ライフから1枚を手札に加える"><span class="stack-card"></span><span class="stack-count">${game.lifeCards.length}</span><small>ダメージ</small></button>`
+    ? `<button class="zone-stack life-stack" data-life-damage draggable="true" data-drag-source="life:top" aria-label="ライフから1枚を手札に加える"><span class="stack-card"></span><span class="stack-count">${game.lifeCards.length}</span><small>ダメージ</small></button>`
     : `<div class="zone-stack empty-stack"><span class="stack-count">0</span><small>ライフなし</small></div>`;
   const selectedCard = game.selectedHandIndex === null ? null : getCard(game.hand[game.selectedHandIndex]);
   const selected = game.selectedHandIndex !== null && game.hand[game.selectedHandIndex] !== undefined;
   const log = game.log.length ? game.log.map((item) => `<div class="log-item"><span class="log-time">${item.time}</span><span>${escapeHtml(item.message)}</span></div>`).join("") : `<div class="no-results">まだ操作はありません</div>`;
-  const image = selectedCard?.image
-    ? `<img class="play-card-image" src="${escapeHtml(selectedCard.image)}" alt="${escapeHtml(selectedCard.name)}" loading="lazy" />`
-    : "";
-  el.innerHTML = `<div class="page-heading play-heading"><div><div class="eyebrow">SOLO PLAYTEST</div><h1>一人回し</h1><p>手札のカードを選び、移動先のエリアに配置できます。</p></div><button class="btn btn-light" data-end-game>← 終了する</button></div>
+  el.innerHTML = `  <div class="page-heading play-heading"><div><div class="eyebrow">SOLO PLAYTEST</div><h1>一人回し</h1><p>カードを移動先へドラッグできます。クリック操作も利用できます。</p></div><button class="btn btn-light" data-end-game>← 終了する</button></div>
     <div class="play-layout"><section class="play-table">
       <div class="play-table-top"><div><h2>${escapeHtml(deck?.name || "プレイ中のデッキ")}</h2><p>山札 ${game.pile.length} 枚　·　トラッシュ ${game.trash.length} 枚</p></div><span class="round-badge">TURN ${game.turn}</span></div>
+      <section class="player-board" aria-label="自分側の盤面">
+        <div class="zone-label">FRONT LINE <span>${game.frontLine.filter(Boolean).length} / 4　·　フロントライン</span></div>
+        <div class="field-zone front-zone">${renderSlots("frontLine")}</div>
+        <div class="zone-label">ENERGY LINE <span>${game.energyLine.filter(Boolean).length} / 4　·　エナジーエリア</span></div>
+        <div class="field-zone energy-zone">${renderSlots("energyLine")}</div>
       <div class="utility-zones">
-        <button class="zone-stack deck-stack" data-draw aria-label="山札から1枚ドロー"><span class="stack-card"></span><span class="stack-count">${game.pile.length}</span><small>山札 · ドロー</small></button>
-        <div class="utility-zone life-zone"><span class="utility-title">LIFE <small>ライフエリア</small></span>${lifeStack}</div>
-        <div class="utility-zone ap-zone"><span class="utility-title">AP <small>APエリア</small></span><div class="ap-cards">${[1, 2, 3].map((item) => `<span class="ap-card" aria-label="APカード ${item}">${item}</span>`).join("")}</div></div>
-        <div class="utility-zone small-pile"><span class="utility-title">TRASH <small>トラッシュ</small></span><strong>${game.trash.length}</strong><small>枚</small></div>
-        <div class="utility-zone small-pile"><span class="utility-title">REMOVED <small>退場エリア</small></span><strong>${game.removed.length}</strong><small>枚</small></div>
-      </div>
-      <div class="zone-label">ENERGY LINE <span>${game.energyLine.filter(Boolean).length} / 3　·　エナジーエリア</span></div>
-      <div class="field-zone energy-zone">${renderSlots("energyLine")}</div>
-      <div class="zone-label">FRONT LINE <span>${game.frontLine.filter(Boolean).length} / 3　·　フロントライン</span></div>
-      <div class="field-zone front-zone">${renderSlots("frontLine")}</div>
-      <div class="zone-label">HAND <span>${game.hand.length} 枚　·　カードを選択</span></div>
-      <div class="hand-zone">${hand || `<span class="empty-zone">手札がありません。ドローしてみましょう。</span>`}</div>
+          <button class="zone-stack deck-stack" data-draw data-drop-zone="pile-top" draggable="${game.pile.length ? "true" : "false"}" ${game.pile.length ? `data-drag-source="pile:top"` : ""} aria-label="山札から1枚ドロー"><span class="stack-card"></span><span class="stack-count">${game.pile.length}</span><small>山札 · ドロー</small></button>
+        <button class="utility-zone deck-peek-button" data-open-peek ${game.pile.length ? "" : "disabled"}><span class="utility-title">DECK</span><strong>山札を見る</strong><small>上からX枚を確認</small></button>
+          <button class="utility-zone deck-bottom-drop" data-drop-zone="pile-bottom"><span class="utility-title">DECK</span><strong>山札の下へ</strong><small>カードをドロップ</small></button>
+          <div class="utility-zone life-zone" data-drop-zone="life"><span class="utility-title">LIFE <small>ライフエリア</small></span>${lifeStack}</div>
+          <div class="utility-zone ap-zone"><span class="utility-title">AP <small>APエリア</small></span><div class="ap-cards">${[1, 2, 3].map((item) => `<span class="ap-card" aria-label="APカード ${item}">${item}</span>`).join("")}</div></div>
+          <button class="utility-zone small-pile zone-open-button" data-open-zone="trash" data-drop-zone="trash" draggable="${game.trash.length ? "true" : "false"}" ${game.trash.length ? `data-drag-source="trash:${game.trash.length - 1}"` : ""}><span class="utility-title">TRASH <small>トラッシュ</small></span><strong>${game.trash.length}</strong><small>一覧・移動</small></button>
+          <button class="utility-zone small-pile zone-open-button" data-open-zone="removed" data-drop-zone="removed" draggable="${game.removed.length ? "true" : "false"}" ${game.removed.length ? `data-drag-source="removed:${game.removed.length - 1}"` : ""}><span class="utility-title">REMOVED <small>リムーブ</small></span><strong>${game.removed.length}</strong><small>一覧・移動</small></button>
+        </div>
+        <div class="zone-label">HAND <span>${game.hand.length} 枚 · カードを選択</span></div>
+        <div class="hand-zone" data-drop-zone="hand">${hand || `<span class="empty-zone">手札がありません。ドローしてみましょう。</span>`}</div>
       <div class="play-controls"><div class="control-group"><button class="btn btn-light" data-place-zone="energyLine" ${selected ? "" : "disabled"}>${selectedCard ? `↓ ${escapeHtml(selectedCard.name)}をエナジーへ` : "↓ エナジーラインへ"}</button><button class="btn btn-coral" data-place-zone="frontLine" ${selected ? "" : "disabled"}>${selectedCard ? `↑ ${escapeHtml(selectedCard.name)}をフロントへ` : "↑ フロントラインへ"}</button><button class="btn btn-light" data-discard-selected ${selected ? "" : "disabled"}>トラッシュへ</button></div><div class="control-group"><button class="btn btn-light" data-draw-multiple>＋＋ 2枚ドロー</button><button class="btn btn-light" data-mulligan>↻ マリガン</button><button class="btn btn-coral" data-next-turn>次のターン →</button></div></div>
+      </section>
     </section>
     <aside class="game-sidebar"><section class="game-panel"><h3>ゲーム情報</h3><div class="game-stat"><span>ターン</span><strong>${game.turn}</strong></div><div class="game-stat"><span>山札</span><strong>${game.pile.length} 枚</strong></div><div class="game-stat"><span>手札</span><strong>${game.hand.length} 枚</strong></div><div class="game-stat"><span>ライフ</span><strong>${game.lifeCards.length} / 7 枚</strong></div><div class="game-stat"><span>選択中</span><strong>${selectedCard ? escapeHtml(selectedCard.name) : "—"}</strong></div></section>
       <section class="game-panel"><h3>プレイログ</h3><div class="game-log">${log}</div></section>
-      <div class="rules-note">手札のカードを選択してから移動先を選びます。場のカードをクリックすると手札に戻ります。山札からのドローとライフからのダメージ移動は各エリアをクリックします。エナジー・APの支払いは手動です。</div>
-    </aside></div>`;
+      <div class="rules-note">カードを手札・ライフ・山札・フロントライン・エナジーライン・トラッシュ・リムーブへドラッグして移動できます。フロントラインのカードに重ねてドロップするとスタックします。場のカードをクリックすると手札に戻り、右クリックで縦向き・横向きを切り替えます。山札を見ると上から指定枚数を確認して順番や移動先を決められます。エナジー・APの支払いは手動です。</div>
+    </aside></div>${renderGameDialog()}`;
 }
 
 document.addEventListener("click", (event) => {
   const dialog = document.querySelector("#card-preview-dialog");
   if (dialog && event.target === dialog) { dialog.close(); return; }
+  const gameDialog = document.querySelector("#game-dialog");
+  if (gameDialog && event.target === gameDialog) { closeGameDialog(); return; }
   const target = event.target.closest("button");
   if (!target || target.disabled) return;
+  if (target.hasAttribute("data-close-game-dialog")) { closeGameDialog(); return; }
+  if (target.hasAttribute("data-open-peek")) { openGameDialog("peek-count"); return; }
+  if (target.hasAttribute("data-confirm-peek")) { confirmPeek(); return; }
+  if (target.hasAttribute("data-finish-peek")) { finishPeek(); return; }
+  if (target.dataset.openZone) { openGameDialog(target.dataset.openZone); return; }
+  if (target.dataset.peekMove) {
+    const [indexText, direction] = target.dataset.peekMove.split(":");
+    const index = Number(indexText);
+    const nextIndex = index + (direction === "up" ? -1 : 1);
+    if (nextIndex >= 0 && nextIndex < game.peeked.length) {
+      [game.peeked[index], game.peeked[nextIndex]] = [game.peeked[nextIndex], game.peeked[index]];
+      renderPlay();
+      document.querySelector("#game-dialog")?.showModal();
+    }
+    return;
+  }
+  if (target.dataset.zoneMove) {
+    const [source, index, destination] = target.dataset.zoneMove.split(":");
+    moveZoneCard(source, Number(index), destination);
+    return;
+  }
   if (target.dataset.previewCard) { showCardPreview(target.dataset.previewCard); return; }
   if (target.hasAttribute("data-close-card-preview")) { previewCardId = null; dialog?.close(); return; }
   if (target.dataset.previewAdd) { changeCard(editingDeckId, target.dataset.previewAdd, 1); return; }
@@ -738,18 +1050,73 @@ document.addEventListener("click", (event) => {
     renderPlay(); return;
   }
   if (target.dataset.returnCard !== undefined) {
-    const [zone, indexText] = target.dataset.returnCard.split(":");
+    const [zone, indexText, layerText] = target.dataset.returnCard.split(":");
     if (!["energyLine", "frontLine"].includes(zone)) return;
-    const fieldIndex = Number(indexText);
-    const id = game[zone][fieldIndex];
-    if (!id) return;
-    game[zone][fieldIndex] = null;
-    game.hand.push(id);
-    game.selectedHandIndex = game.hand.length - 1;
-    addLog(`${getCard(id).name}を場から手札に戻しました。`);
-    renderPlay(); return;
+    moveGameCard(`field:${zone}:${indexText}:${layerText}`, "hand");
+    return;
   }
 });
+
+document.addEventListener("dragstart", (event) => {
+  const source = event.target.closest("[data-drag-source]");
+  if (!source || !game) return;
+  game.dragSource = source.dataset.dragSource;
+  event.dataTransfer.effectAllowed = "move";
+  event.dataTransfer.setData("text/plain", game.dragSource);
+});
+
+document.addEventListener("dragover", (event) => {
+  const target = event.target.closest("[data-drop-zone]");
+  if (!target || !game?.dragSource) return;
+  event.preventDefault();
+  event.dataTransfer.dropEffect = "move";
+  target.classList.add("drop-active");
+});
+
+document.addEventListener("dragleave", (event) => {
+  const target = event.target.closest("[data-drop-zone]");
+  if (target && !target.contains(event.relatedTarget)) target.classList.remove("drop-active");
+});
+
+document.addEventListener("drop", (event) => {
+  const target = event.target.closest("[data-drop-zone]");
+  if (!target || !game) return;
+  event.preventDefault();
+  const source = game.dragSource || event.dataTransfer.getData("text/plain");
+  game.dragSource = null;
+  document.querySelectorAll(".drop-active").forEach((element) => element.classList.remove("drop-active"));
+  if (source) moveGameCard(source, target.dataset.dropZone);
+});
+
+document.addEventListener("dragend", () => {
+  if (game) game.dragSource = null;
+  document.querySelectorAll(".drop-active").forEach((element) => element.classList.remove("drop-active"));
+});
+
+document.addEventListener("contextmenu", (event) => {
+  const card = event.target.closest(".play-card[data-return-card]");
+  if (!card || !game) return;
+  event.preventDefault();
+  const [zone, indexText] = card.dataset.returnCard.split(":");
+  const key = `${zone}:${indexText}`;
+  game.rotated[key] = !game.rotated[key];
+  const overlays = game.raidStacks[key] || [];
+  const topCardId = overlays[overlays.length - 1] || game[zone][Number(indexText)];
+  addLog(`${getCard(topCardId)?.name || "カード"}を${game.rotated[key] ? "横向き" : "縦向き"}にしました。`);
+  renderPlay();
+});
+
+document.addEventListener("change", (event) => {
+  if (!game || !event.target.matches("[data-peek-destination]")) return;
+  const item = game.peeked?.[Number(event.target.dataset.peekDestination)];
+  if (item) item.destination = event.target.value;
+});
+
+document.addEventListener("cancel", (event) => {
+  if (event.target.id !== "game-dialog") return;
+  event.preventDefault();
+  closeGameDialog();
+}, true);
 
 document.addEventListener("input", (event) => {
   if (event.target.id === "deck-name") {
