@@ -6,6 +6,7 @@ const COLORS = {
   yellow: { label: "黄", hex: "#d7a548" },
   purple: { label: "紫", hex: "#9772c8" },
   green: { label: "緑", hex: "#4ba47d" },
+  none: { label: "無色", hex: "#9299a4" },
 };
 
 const SAMPLE_TITLE_ID = "sample-title";
@@ -73,6 +74,8 @@ let activeView = "decks";
 let editingDeckId = null;
 let catalogFilter = "all";
 let catalogQuery = "";
+let catalogSearchComposing = false;
+let previewCardId = null;
 let game = null;
 let toastTimer;
 
@@ -101,13 +104,84 @@ function getCard(id) { return catalog.find((card) => card.id === id); }
 function getTitle(id) { return titles.find((title) => title.id === id); }
 function deckSize(deck) { return Object.values(deck.cards).reduce((sum, count) => sum + count, 0); }
 function deckColors(deck) {
-  const colors = [...new Set(Object.entries(deck.cards).filter(([, count]) => count > 0).map(([id]) => getCard(id)?.color).filter(Boolean))];
+  const colors = [...new Set(Object.entries(deck.cards).filter(([, count]) => count > 0).map(([id]) => getCard(id)?.color).filter((color) => color && color !== "none"))];
   return colors;
 }
 function formatDate(timestamp) {
   return new Intl.DateTimeFormat("ja-JP", { month: "numeric", day: "numeric" }).format(new Date(timestamp));
 }
 function findDeck(id) { return decks.find((deck) => deck.id === id); }
+function cardLimitId(card) { return card.cardNumber ? card.cardNumber.replace(/_p\d+$/i, "") : card.id; }
+function deckCopiesOfCard(deck, card) {
+  if (!card) return 0;
+  const limitId = cardLimitId(card);
+  return Object.entries(deck.cards).reduce((total, [id, count]) => {
+    const deckCard = getCard(id);
+    return total + (deckCard && cardLimitId(deckCard) === limitId ? count : 0);
+  }, 0);
+}
+
+function renderCatalogRows(deck) {
+  const size = deckSize(deck);
+  const filtered = catalog.filter((card) => card.titleId === deck.titleId
+    && (catalogFilter === "all" || card.color === catalogFilter)
+    && `${card.name} ${card.type} ${COLORS[card.color].label}`.toLowerCase().includes(catalogQuery.toLowerCase()));
+  return filtered.map((card) => `<div class="catalog-row">
+    <button class="mini-card card-preview-trigger" data-preview-card="${escapeHtml(card.id)}" style="--card-color:${COLORS[card.color].hex}" aria-label="${escapeHtml(card.name)}のカード画像と詳細を表示">${card.image ? `<img class="catalog-card-image" src="${escapeHtml(card.image)}" alt="" loading="lazy" />` : escapeHtml(card.symbol)}</button>
+    <div><button class="card-title card-title-preview" data-preview-card="${escapeHtml(card.id)}">${escapeHtml(card.name)}</button><div class="card-meta"><span>${COLORS[card.color].label}</span><span>${card.type}</span><span>BP ${card.bp || "—"}</span>${card.cardNumber ? `<span>${escapeHtml(card.cardNumber)}</span>` : ""}</div></div>
+    <span class="card-cost">${card.cost}</span><button class="add-card-btn" data-add-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を追加" ${deckCopiesOfCard(deck, card) >= 4 || size >= 50 ? "disabled" : ""}>＋</button>
+  </div>`).join("") || `<div class="no-results">該当するカードがありません</div>`;
+}
+
+function updateCatalogResults() {
+  const deck = findDeck(editingDeckId);
+  const list = document.querySelector("#view-builder .catalog-list");
+  if (!deck || !list) return;
+  catalogQuery = document.querySelector("#catalog-search").value;
+  list.innerHTML = renderCatalogRows(deck);
+}
+
+function renderBuilderPreservingScroll() {
+  const catalogScrollTop = document.querySelector("#view-builder .catalog-list")?.scrollTop || 0;
+  const deckScrollTop = document.querySelector("#view-builder .deck-list")?.scrollTop || 0;
+  const pageScrollTop = window.scrollY;
+  renderBuilder();
+  const catalogList = document.querySelector("#view-builder .catalog-list");
+  const deckList = document.querySelector("#view-builder .deck-list");
+  if (catalogList) catalogList.scrollTop = catalogScrollTop;
+  if (deckList) deckList.scrollTop = deckScrollTop;
+  window.scrollTo(window.scrollX, pageScrollTop);
+}
+
+function showCardPreview(cardId) {
+  const card = getCard(cardId);
+  const dialog = document.querySelector("#card-preview-dialog");
+  const content = document.querySelector("#card-preview-content");
+  if (!card || !dialog || !content) return;
+  const deck = findDeck(editingDeckId);
+  const cardCount = deck?.cards[card.id] || 0;
+  const copies = deck ? deckCopiesOfCard(deck, card) : 0;
+  const size = deck ? deckSize(deck) : 0;
+  previewCardId = card.id;
+  content.innerHTML = `<div class="card-preview-layout">
+    <div class="card-preview-art" style="--card-color:${COLORS[card.color].hex}">${card.image ? `<img src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}のカード画像" />` : `<span>${escapeHtml(card.symbol)}</span>`}</div>
+    <div class="card-preview-details">
+      <p class="card-preview-eyebrow">${escapeHtml(card.cardNumber || card.id)}${card.rarity ? ` · ${escapeHtml(card.rarity)}` : ""}</p>
+      <h2 id="card-preview-title">${escapeHtml(card.name)}</h2>
+      <div class="card-preview-stats">
+        <span>色<strong>${COLORS[card.color].label}</strong></span><span>種類<strong>${escapeHtml(card.type)}</strong></span>
+        <span>コスト<strong>${card.cost}</strong></span><span>BP<strong>${card.bp || "—"}</strong></span>
+        ${card.apCost !== undefined ? `<span>AP<strong>${card.apCost}</strong></span>` : ""}
+        ${card.requiredEnergy !== undefined ? `<span>必要エナジー<strong>${card.requiredEnergy}</strong></span>` : ""}
+        ${card.generatedEnergy !== undefined ? `<span>発生エナジー<strong>${card.generatedEnergy}</strong></span>` : ""}
+      </div>
+      ${card.effect ? `<p class="card-preview-effect">${escapeHtml(card.effect)}</p>` : ""}
+      ${deck ? `<div class="card-preview-quantity"><span>このカード <strong>${cardCount}</strong> 枚</span><span>同一カード番号 <strong>${copies}</strong> / 4 枚</span></div>
+        <div class="card-preview-actions"><button class="btn btn-light" data-preview-remove="${escapeHtml(card.id)}" ${cardCount < 1 ? "disabled" : ""}>− 1枚減らす</button><button class="btn btn-coral" data-preview-add="${escapeHtml(card.id)}" ${copies >= 4 || size >= 50 ? "disabled" : ""}>＋ 1枚追加</button></div>` : ""}
+    </div>
+  </div>`;
+  dialog.showModal();
+}
 
 function validateCatalogPayload(payload) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)
@@ -246,6 +320,7 @@ function validateImportedDecks(payload) {
     }
 
     const cards = {};
+    const copyCounts = new Map();
     let size = 0;
     const titleId = typeof deck.titleId === "string" ? deck.titleId : SAMPLE_TITLE_ID;
     if (!getTitle(titleId)) {
@@ -260,6 +335,11 @@ function validateImportedDecks(payload) {
       }
       if (!Number.isInteger(count) || count < 1 || count > 4) {
         throw new Error(`「${deck.name}」のカード枚数は1種類につき1〜4枚で指定してください。`);
+      }
+      const limitId = cardLimitId(getCard(cardId));
+      copyCounts.set(limitId, (copyCounts.get(limitId) || 0) + count);
+      if (copyCounts.get(limitId) > 4) {
+        throw new Error(`「${deck.name}」に同じカード番号のカードが5枚以上含まれています。`);
       }
       cards[cardId] = count;
       size += count;
@@ -377,23 +457,18 @@ function renderBuilder() {
   const colors = deckColors(deck);
   const title = getTitle(deck.titleId);
   const titleCards = catalog.filter((card) => card.titleId === deck.titleId);
-  const filtered = titleCards.filter((card) => (catalogFilter === "all" || card.color === catalogFilter) && `${card.name} ${card.type} ${COLORS[card.color].label}`.toLowerCase().includes(catalogQuery.toLowerCase()));
-  const cardRows = filtered.map((card) => `<div class="catalog-row">
-    <div class="mini-card" style="--card-color:${COLORS[card.color].hex}">${card.image ? `<img class="catalog-card-image" src="${escapeHtml(card.image)}" alt="" loading="lazy" />` : escapeHtml(card.symbol)}</div>
-    <div><p class="card-title">${escapeHtml(card.name)}</p><div class="card-meta"><span>${COLORS[card.color].label}</span><span>${card.type}</span><span>BP ${card.bp || "—"}</span></div></div>
-    <span class="card-cost">${card.cost}</span><button class="add-card-btn" data-add-card="${card.id}" aria-label="${escapeHtml(card.name)}を追加">＋</button>
-  </div>`).join("");
   const owned = Object.entries(deck.cards).filter(([, count]) => count > 0).sort((a, b) => (getCard(a[0])?.cost || 0) - (getCard(b[0])?.cost || 0));
   const ownedRows = owned.map(([id, count]) => {
     const card = getCard(id);
     if (!card) return "";
-    return `<div class="deck-list-row"><div><div class="owned-card-title">${escapeHtml(card.name)}</div><div class="owned-card-meta">${COLORS[card.color].label}　·　${card.cost}コスト　·　BP ${card.bp || "—"}</div></div><div class="quantity-control"><button data-remove-card="${card.id}" aria-label="${escapeHtml(card.name)}を1枚減らす">−</button><strong>${count}</strong><button data-add-card="${card.id}" aria-label="${escapeHtml(card.name)}を1枚増やす" ${count >= 4 || size >= 50 ? "disabled" : ""}>＋</button></div></div>`;
+    const copies = deckCopiesOfCard(deck, card);
+    return `<div class="deck-list-row"><div><button class="owned-card-title card-title-preview" data-preview-card="${escapeHtml(card.id)}">${escapeHtml(card.name)}</button><div class="owned-card-meta">${COLORS[card.color].label}　·　${card.cost}コスト　·　BP ${card.bp || "—"}${card.cardNumber ? `　·　${escapeHtml(card.cardNumber)}` : ""}</div></div><div class="quantity-control"><button data-remove-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を1枚減らす">−</button><strong>${count}</strong><button data-add-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を1枚増やす" ${copies >= 4 || size >= 50 ? "disabled" : ""}>＋</button></div></div>`;
   }).join("");
   const colorCount = colors.length;
-  const valid = size === 50 && owned.every(([, count]) => count <= 4);
+  const valid = size === 50 && owned.every(([id]) => deckCopiesOfCard(deck, getCard(id)) <= 4);
   const colorParts = Object.entries(deck.cards).reduce((counts, [id, count]) => {
     const color = getCard(id)?.color;
-    if (color) counts[color] = (counts[color] || 0) + count;
+    if (color && color !== "none") counts[color] = (counts[color] || 0) + count;
     return counts;
   }, {});
   const distribution = Object.entries(colorParts).map(([color, count]) => `<span style="width:${size ? count / size * 100 : 0}%;background:${COLORS[color].hex}" title="${COLORS[color].label}: ${count}枚"></span>`).join("");
@@ -404,7 +479,7 @@ function renderBuilder() {
       <section class="panel catalog-panel"><div class="panel-head"><h2>登録カード　·　${escapeHtml(title?.name || "タイトル未登録")}</h2><span>${titleCards.length} cards</span></div>
         <div class="catalog-tools"><div class="search-wrap"><input class="search-input" id="catalog-search" placeholder="カード名で検索..." value="${escapeHtml(catalogQuery)}" /></div>
           <select class="select-input" id="color-filter" aria-label="カラーで絞り込み"><option value="all" ${catalogFilter === "all" ? "selected" : ""}>全カラー</option>${Object.entries(COLORS).map(([id, color]) => `<option value="${id}" ${catalogFilter === id ? "selected" : ""}>${color.label}</option>`).join("")}</select>
-        </div><div class="catalog-list">${cardRows || `<div class="no-results">該当するカードがありません</div>`}</div>
+        </div><div class="catalog-list">${renderCatalogRows(deck)}</div>
       </section>
       <div class="deck-side"><section class="panel"><div class="panel-head"><h2>デッキリスト</h2><span>${owned.length} 種類</span></div>
         <div class="deck-list">${ownedRows || `<div class="no-results">カード一覧からカードを追加してください</div>`}</div>
@@ -414,7 +489,11 @@ function renderBuilder() {
           <div class="deck-warning ${valid ? "valid" : ""}">${valid ? "✓ 50枚のデッキが完成しました。一人回しを始められます。" : size < 50 ? `あと ${50 - size} 枚でデッキが完成します。` : "デッキが50枚を超えています。カードを減らしてください。"}</div>
         </div><div class="distribution"><div class="distribution-head"><span>カラー配分</span><span>${colorCount} colors</span></div><div class="distribution-bar">${distribution}</div></div>
       </section><div class="builder-actions"><button class="btn btn-light" data-view="decks">一覧へ戻る</button><button class="btn btn-coral" data-play-editing="${escapeHtml(deck.id)}" ${valid ? "" : "disabled"}>▷ 一人回し</button></div></div>
-    </div>`;
+    </div>
+    <dialog id="card-preview-dialog" class="card-preview-dialog" aria-labelledby="card-preview-title">
+      <button class="card-preview-close" data-close-card-preview aria-label="閉じる">×</button>
+      <div id="card-preview-content"></div>
+    </dialog>`;
 }
 
 function changeCard(deckId, cardId, delta) {
@@ -422,8 +501,9 @@ function changeCard(deckId, cardId, delta) {
   const card = getCard(cardId);
   if (!deck || !card) return;
   const count = deck.cards[cardId] || 0;
-  if (delta > 0 && (count >= 4 || deckSize(deck) >= 50)) {
-    showToast(count >= 4 ? "同じカードは4枚までです。" : "デッキは50枚までです。");
+  const copies = deckCopiesOfCard(deck, card);
+  if (delta > 0 && (copies >= 4 || deckSize(deck) >= 50)) {
+    showToast(copies >= 4 ? "同じカードは4枚までです。" : "デッキは50枚までです。");
     return;
   }
   const next = count + delta;
@@ -431,7 +511,9 @@ function changeCard(deckId, cardId, delta) {
   else deck.cards[cardId] = next;
   deck.updatedAt = Date.now();
   saveDecks();
-  renderBuilder();
+  const reopenPreview = document.querySelector("#card-preview-dialog")?.open ? previewCardId : null;
+  renderBuilderPreservingScroll();
+  if (reopenPreview) showCardPreview(reopenPreview);
 }
 
 function startGame(deckId) {
@@ -546,8 +628,14 @@ function renderPlay() {
 }
 
 document.addEventListener("click", (event) => {
+  const dialog = document.querySelector("#card-preview-dialog");
+  if (dialog && event.target === dialog) { dialog.close(); return; }
   const target = event.target.closest("button");
   if (!target || target.disabled) return;
+  if (target.dataset.previewCard) { showCardPreview(target.dataset.previewCard); return; }
+  if (target.hasAttribute("data-close-card-preview")) { previewCardId = null; dialog?.close(); return; }
+  if (target.dataset.previewAdd) { changeCard(editingDeckId, target.dataset.previewAdd, 1); return; }
+  if (target.dataset.previewRemove) { changeCard(editingDeckId, target.dataset.previewRemove, -1); return; }
   if (target.dataset.view) { setView(target.dataset.view); return; }
   if (target.dataset.action === "new-deck") { createDeck(); return; }
   if (target.dataset.openDeck) { openBuilder(target.dataset.openDeck); return; }
@@ -676,13 +764,18 @@ document.addEventListener("input", (event) => {
     event.target.setSelectionRange(cursor, cursor);
   }
   if (event.target.id === "catalog-search") {
-    catalogQuery = event.target.value;
-    const cursor = event.target.selectionStart;
-    renderBuilder();
-    const input = document.querySelector("#catalog-search");
-    input.focus();
-    input.setSelectionRange(cursor, cursor);
+    if (!catalogSearchComposing && !event.isComposing) updateCatalogResults();
   }
+});
+
+document.addEventListener("compositionstart", (event) => {
+  if (event.target.id === "catalog-search") catalogSearchComposing = true;
+});
+
+document.addEventListener("compositionend", (event) => {
+  if (event.target.id !== "catalog-search") return;
+  catalogSearchComposing = false;
+  updateCatalogResults();
 });
 
 document.addEventListener("change", (event) => {
