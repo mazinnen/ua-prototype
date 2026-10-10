@@ -582,13 +582,28 @@ function cardMarkup(id, index, zone = "hand", layer = 0) {
     : `data-return-card="${zone}:${index}:${layer}" title="クリックして手札に戻す。別のエリアへドラッグできます" aria-label="${escapeHtml(card.name)}。右クリックで縦横切替"`;
   const dragSource = zone === "hand" ? `hand:${index}` : `field:${zone}:${index}:${layer}`;
   const rotated = zone !== "hand" && game.rotated[`${zone}:${index}`];
-  return `<button class="play-card ${selected ? "selected" : ""} ${rotated ? "rotated" : ""}" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${Math.max(0, (game.raidStacks[`${zone}:${index}`] || []).length - layer)}" draggable="true" data-drag-source="${dragSource}" ${action}>
-    <span class="play-card-cost">${card.cost}</span>${image}<span class="play-card-name">${escapeHtml(card.name)}</span><span class="play-card-type">${COLORS[card.color].label} · BP ${card.bp || "—"}</span>
+  return `<button class="play-card ${selected ? "selected" : ""} ${rotated ? "rotated" : ""} ${card.image ? "has-card-image" : ""}" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${layer}" draggable="true" data-drag-source="${dragSource}" ${action}>
+    <span class="play-card-cost">${card.cost}</span>${image}<span class="play-card-name">${escapeHtml(card.name)}</span><span class="play-card-type">${COLORS[card.color].label} · BP ${card.bp || "—"}</span>${card.effect ? `<span class="play-card-effect">${escapeHtml(card.effect)}</span>` : ""}
   </button>`;
 }
 
 function renderGameDialog() {
   if (!game?.dialogMode) return "";
+  if (game.dialogMode === "card-preview") {
+    const card = getCard(game.previewCardId);
+    if (!card) return "";
+    return `<dialog id="game-dialog" class="game-dialog game-dialog-card-preview">
+      <div class="game-dialog-head"><div><p>CARD DETAIL</p><h2>${escapeHtml(card.name)}</h2></div><button class="card-preview-close" data-close-game-dialog aria-label="閉じる">×</button></div>
+      <div class="game-card-preview-layout">
+        ${card.image ? `<img class="game-card-preview-image" src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}のカード画像" />` : `<div class="game-card-preview-art" style="--card-color:${COLORS[card.color].hex}">${escapeHtml(card.symbol)}</div>`}
+        <div class="game-card-preview-details"><p>${escapeHtml(card.cardNumber || card.id)}${card.rarity ? ` · ${escapeHtml(card.rarity)}` : ""}</p>
+          <div class="game-card-preview-stats"><span>色<strong>${COLORS[card.color].label}</strong></span><span>種類<strong>${escapeHtml(card.type)}</strong></span><span>コスト<strong>${card.cost}</strong></span><span>BP<strong>${card.bp || "—"}</strong></span></div>
+          ${card.effect ? `<p class="game-card-preview-effect">${escapeHtml(card.effect)}</p>` : ""}
+          ${game.previewSource ? `<button class="btn btn-light" data-inspect-return>このカードを手札に戻す</button>` : ""}
+        </div>
+      </div>
+    </dialog>`;
+  }
   if (game.dialogMode === "peek-count") {
     return `<dialog id="game-dialog" class="game-dialog">
       <div class="game-dialog-head"><div><p>DECK TOP</p><h2>山札を見る</h2></div><button class="card-preview-close" data-close-game-dialog aria-label="閉じる">×</button></div>
@@ -652,6 +667,8 @@ function closeGameDialog(restorePeek = true) {
   if (restorePeek && game.peeked) game.pile.push(...game.peekOriginal.slice().reverse());
   game.peeked = null;
   game.peekOriginal = null;
+  game.previewCardId = null;
+  game.previewSource = null;
   game.dialogMode = null;
   renderPlay();
 }
@@ -757,13 +774,15 @@ function renderFieldSlot(zone, index) {
     if (layer === stack.length - 1) return cardMarkup(cardId, index, zone, layer);
     const card = getCard(cardId);
     if (!card) return "";
-    return `<div class="play-card raid-underlay" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${stack.length - layer - 1}">
+    return `<div class="play-card raid-underlay ${card.image ? "has-card-image" : ""}" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${layer}">
       ${card.image ? `<img class="play-card-image" src="${escapeHtml(card.image)}" alt="" loading="lazy" />` : `<span class="play-card-art">${escapeHtml(card.symbol)}</span>`}
-      <span class="play-card-name">${escapeHtml(card.name)}</span>
+      <span class="play-card-cost">${card.cost}</span><span class="play-card-name">${escapeHtml(card.name)}</span><span class="play-card-type">${COLORS[card.color].label} · BP ${card.bp || "—"}</span>${card.effect ? `<span class="play-card-effect">${escapeHtml(card.effect)}</span>` : ""}
     </div>`;
   }).join("");
   return `<div class="field-slot filled ${stack.length > 1 ? "raid-stacked" : ""}" data-drop-zone="field:${zone}:${index}">
-    <div class="field-card-stack" style="--stack-size:${stack.length}">${cards}</div>${stack.length > 1 ? `<span class="raid-stack-count" title="${stack.length}枚を重ねています">重ね ${stack.length}</span>` : ""}
+    <div class="field-card-stack" style="--stack-size:${stack.length}">${cards}</div>
+    <button class="field-card-inspect" data-inspect-game-card="${escapeHtml(stack[stack.length - 1])}" data-inspect-source="field:${zone}:${index}:${stack.length - 1}" aria-label="${escapeHtml(getCard(stack[stack.length - 1])?.name || "カード")}の詳細を拡大">拡大</button>
+    ${stack.length > 1 ? `<span class="raid-stack-count" title="${stack.length}枚を重ねています">重ね ${stack.length}</span>` : ""}
   </div>`;
 }
 
@@ -781,10 +800,6 @@ function moveGameCard(sourceValue, destinationValue) {
     if (!["frontLine", "energyLine"].includes(zone) || !Number.isInteger(index) || !line || index < 0 || index >= line.length) return false;
     if (source[0] === "field" && source[1] === zone && Number(source[2]) === index) return false;
     const occupied = Boolean(line[index]);
-    if (occupied && zone !== "frontLine") {
-      showToast("カードを重ねられるのはフロントラインです。");
-      return false;
-    }
     destinationField = { zone, index, occupied };
   }
 
@@ -842,7 +857,7 @@ function moveGameCard(sourceValue, destinationValue) {
       if (!game.raidStacks[slot]) game.raidStacks[slot] = [];
       game.raidStacks[slot].push(cardId);
       if (rotation) game.rotated[slot] = true;
-      addLog(`${getCard(cardId).name}をフロントラインのカードに重ねました。`);
+      addLog(`${getCard(cardId).name}を${zone === "energyLine" ? "エナジーライン" : "フロントライン"}のカードに重ねました。`);
     } else {
       game[zone][targetIndex] = cardId;
       if (rotation) game.rotated[`${zone}:${targetIndex}`] = true;
@@ -912,7 +927,7 @@ function renderPlay() {
     </section>
     <aside class="game-sidebar"><section class="game-panel"><h3>ゲーム情報</h3><div class="game-stat"><span>ターン</span><strong>${game.turn}</strong></div><div class="game-stat"><span>山札</span><strong>${game.pile.length} 枚</strong></div><div class="game-stat"><span>手札</span><strong>${game.hand.length} 枚</strong></div><div class="game-stat"><span>ライフ</span><strong>${game.lifeCards.length} / 7 枚</strong></div><div class="game-stat"><span>選択中</span><strong>${selectedCard ? escapeHtml(selectedCard.name) : "—"}</strong></div></section>
       <section class="game-panel"><h3>プレイログ</h3><div class="game-log">${log}</div></section>
-      <div class="rules-note">カードを手札・ライフ・山札・フロントライン・エナジーライン・トラッシュ・リムーブへドラッグして移動できます。フロントラインのカードに重ねてドロップするとスタックします。場のカードをクリックすると手札に戻り、右クリックで縦向き・横向きを切り替えます。山札を見ると上から指定枚数を確認して順番や移動先を決められます。エナジー・APの支払いは手動です。</div>
+      <div class="rules-note">カードを手札・ライフ・山札・フロントライン・エナジーライン・トラッシュ・リムーブへドラッグして移動できます。フロントラインまたはエナジーラインのカードに重ねてドロップするとスタックします。場のカードをクリックすると手札に戻り、右クリックで縦向き・横向きを切り替えます。山札を見ると上から指定枚数を確認して順番や移動先を決められます。エナジー・APの支払いは手動です。</div>
     </aside></div>${renderGameDialog()}`;
 }
 
@@ -924,6 +939,21 @@ document.addEventListener("click", (event) => {
   const target = event.target.closest("button");
   if (!target || target.disabled) return;
   if (target.hasAttribute("data-close-game-dialog")) { closeGameDialog(); return; }
+  if (target.dataset.inspectGameCard) {
+    game.previewCardId = target.dataset.inspectGameCard;
+    game.previewSource = target.dataset.inspectSource;
+    openGameDialog("card-preview");
+    return;
+  }
+  if (target.hasAttribute("data-inspect-return")) {
+    const source = game.previewSource;
+    game.previewCardId = null;
+    game.previewSource = null;
+    game.dialogMode = null;
+    document.querySelector("#game-dialog")?.close();
+    if (source) moveGameCard(source, "hand");
+    return;
+  }
   if (target.hasAttribute("data-open-peek")) { openGameDialog("peek-count"); return; }
   if (target.hasAttribute("data-confirm-peek")) { confirmPeek(); return; }
   if (target.hasAttribute("data-finish-peek")) { finishPeek(); return; }
@@ -1058,6 +1088,7 @@ document.addEventListener("click", (event) => {
 });
 
 document.addEventListener("dragstart", (event) => {
+  if (!(event.target instanceof Element)) return;
   const source = event.target.closest("[data-drag-source]");
   if (!source || !game) return;
   game.dragSource = source.dataset.dragSource;
@@ -1066,6 +1097,7 @@ document.addEventListener("dragstart", (event) => {
 });
 
 document.addEventListener("dragover", (event) => {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest("[data-drop-zone]");
   if (!target || !game?.dragSource) return;
   event.preventDefault();
@@ -1074,11 +1106,13 @@ document.addEventListener("dragover", (event) => {
 });
 
 document.addEventListener("dragleave", (event) => {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest("[data-drop-zone]");
   if (target && !target.contains(event.relatedTarget)) target.classList.remove("drop-active");
 });
 
 document.addEventListener("drop", (event) => {
+  if (!(event.target instanceof Element)) return;
   const target = event.target.closest("[data-drop-zone]");
   if (!target || !game) return;
   event.preventDefault();

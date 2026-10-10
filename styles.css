@@ -229,20 +229,33 @@ button { cursor: pointer; }
 .play-card-name { margin-top: 7px; font-size: 9px; font-weight: 800; line-height: 1.35; }
 .play-card-type { margin-top: 3px; color: #818b99; font-size: 8px; }
 .empty-zone { color: #738198; font-size: 10px; }
-.field-zone { min-height: 105px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 7px; padding: 10px; border: 1px dashed #42516a; border-radius: 6px; background: #202e42; }
-.field-slot { min-width: 0; min-height: 97px; display: grid; place-items: center; border: 1px dashed #45546b; border-radius: 5px; color: #708097; font-size: 8px; }
+.field-zone { min-height: 185px; display: grid; grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 7px; padding: 10px; overflow-x: auto; border: 1px dashed #42516a; border-radius: 6px; background: #202e42; }
+.field-slot { position: relative; min-width: 0; min-height: 163px; display: grid; place-items: center; border: 1px dashed #45546b; border-radius: 5px; color: #708097; font-size: 8px; }
 .field-slot.filled { border-style: solid; }
-.field-card-stack { position: relative; width: 100%; height: calc(80px + (var(--stack-size) - 1) * 6px); }
-.field-slot .play-card { position: absolute; top: calc(var(--stack-top) * 6px); left: 0; min-width: 0; flex-basis: auto; width: 100%; height: 80px; min-height: 0; padding: 8px; border-radius: 5px; cursor: grab; }
+.field-card-stack { position: relative; width: 100%; height: calc(155px + (var(--stack-size) - 1) * 18px); }
+.field-slot .play-card { position: absolute; z-index: calc(var(--stack-layer) + 1); top: calc(var(--stack-top) * 18px); left: 50%; min-width: 0; flex-basis: auto; width: min(100%, 110px); height: 155px; min-height: 0; padding: 7px; border-radius: 5px; cursor: grab; transform: translateX(-50%); }
 .field-slot .play-card:active, .hand-zone .play-card:active { cursor: grabbing; }
-.field-slot .play-card:hover { z-index: 3; }
-.field-slot .play-card-art { height: 35px; margin-top: 9px; font-size: 15px; }
-.field-slot .play-card-image { height: 35px; margin-top: 9px; }
-.field-slot .play-card-name { margin-top: 4px; font-size: 8px; }
-.field-slot .play-card-type { display: none; }
-.field-slot .play-card.rotated { transform: rotate(90deg) scale(.78); }
-.field-slot .play-card.rotated:hover { transform: rotate(90deg) scale(.82); }
+.field-slot .play-card:hover { z-index: 10; transform: translateX(-50%) translateY(-2px); }
+.field-slot .play-card.rotated { transform: translateX(-50%) rotate(90deg) scale(.68); }
+.field-slot .play-card.rotated:hover { transform: translateX(-50%) rotate(90deg) scale(.72); }
+.field-slot .play-card-art { height: 42px; margin-top: 13px; font-size: 18px; }
+.field-slot .play-card-image { height: 42px; margin-top: 13px; }
+.field-slot .play-card-name { display: block; margin-top: 5px; font-size: 9px; line-height: 1.25; }
+.field-slot .play-card-type { display: block; margin-top: 4px; font-size: 8px; }
+.field-slot .play-card-effect { display: -webkit-box; margin-top: 4px; overflow: hidden; color: #48576a; font-size: 7px; line-height: 1.25; text-align: left; -webkit-box-orient: vertical; -webkit-line-clamp: 4; }
+.field-slot .play-card.has-card-image .play-card-image { position: absolute; inset: 0; width: 100%; height: 100%; margin: 0; border-radius: 4px; background: white; object-fit: contain; }
+.field-slot .play-card.has-card-image .play-card-cost,
+.field-slot .play-card.has-card-image .play-card-name,
+.field-slot .play-card.has-card-image .play-card-type,
+.field-slot .play-card.has-card-image .play-card-effect { display: none; }
 .field-slot .raid-underlay { display: block; cursor: default; }
+.field-slot .raid-underlay .play-card-cost { display: grid; }
+.field-slot .raid-underlay.has-card-image .play-card-cost,
+.field-slot .raid-underlay.has-card-image .play-card-name,
+.field-slot .raid-underlay.has-card-image .play-card-type,
+.field-slot .raid-underlay.has-card-image .play-card-effect { display: none; }
+.field-card-inspect { position: absolute; z-index: 12; top: 4px; right: 4px; padding: 3px 5px; border: 1px solid #53647c; border-radius: 4px; color: #f4f6fa; background: #18263ad9; font: inherit; font-size: 8px; }
+.field-card-inspect:hover { border-color: #f0c776; color: #f0c776; }
 .field-slot .raid-stack-count { position: absolute; z-index: 4; right: 3px; bottom: 3px; padding: 3px 5px; border-radius: 10px; color: #19263a; background: #f0c776; font-size: 8px; font-weight: 800; pointer-events: none; }
 .drop-active { outline: 2px solid #f0c776 !important; outline-offset: 2px; border-color: #f0c776 !important; background-color: #35435a !important; }
 .energy-zone { background: #1e2c40; }
@@ -268,6 +281,14 @@ button { cursor: pointer; }
 .game-dialog { position: relative; width: min(540px, calc(100vw - 28px)); max-width: none; max-height: min(88vh, 820px); padding: 22px; overflow: auto; border: 1px solid #dfe4eb; border-radius: 11px; color: #182438; background: white; box-shadow: 0 24px 80px #101a2a40; }
 .game-dialog::backdrop { background: #101a2acc; backdrop-filter: blur(3px); }
 .game-dialog-wide { width: min(760px, calc(100vw - 28px)); }
+.game-dialog-card-preview { width: min(820px, calc(100vw - 28px)); }
+.game-card-preview-layout { display: grid; grid-template-columns: minmax(180px, .8fr) minmax(0, 1fr); align-items: start; gap: 22px; margin-top: 18px; }
+.game-card-preview-image, .game-card-preview-art { display: grid; place-items: center; width: 100%; max-height: 68vh; aspect-ratio: 5 / 7; border-radius: 7px; object-fit: contain; color: var(--card-color); background: #f0f2f5; font-size: 54px; font-weight: 800; }
+.game-card-preview-details > p:first-child { margin: 0 0 12px; color: #8994a3; font-size: 10px; }
+.game-card-preview-stats { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+.game-card-preview-stats span { display: grid; gap: 4px; padding: 9px; border: 1px solid #edf0f3; border-radius: 6px; color: #8994a3; font-size: 9px; }
+.game-card-preview-stats strong { color: #2a374c; font-size: 11px; }
+.game-card-preview-effect { margin: 13px 0; padding: 12px; border-radius: 6px; color: #2a374c; background: #f6f7f9; font-size: 11px; line-height: 1.7; white-space: pre-line; }
 .game-dialog-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 20px; }
 .game-dialog-head p { margin: 2px 0 5px; color: #8994a3; font-size: 9px; letter-spacing: .1em; }
 .game-dialog-head h2 { margin: 0; font-size: 17px; }
@@ -359,6 +380,8 @@ button { cursor: pointer; }
   .game-dialog-card { grid-template-columns: 35px minmax(0, 1fr) auto; gap: 7px; }
   .game-dialog-card .select-input { grid-column: 2 / 3; }
   .game-dialog-move-actions { grid-column: 2 / -1; }
+  .game-card-preview-layout { grid-template-columns: minmax(0, 1fr); gap: 14px; }
+  .game-card-preview-image, .game-card-preview-art { width: auto; max-width: 100%; height: min(55vh, 440px); margin: 0 auto; }
 }
 @media (max-width: 410px) {
   .local-status { font-size: 0; }
@@ -367,10 +390,14 @@ button { cursor: pointer; }
   .summary-icon { display: none; }
   .utility-zones { gap: 4px; }
   .utility-zone, .zone-stack { min-height: 65px; }
-  .field-zone { grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; padding: 6px; }
-  .field-slot { min-height: 75px; }
-  .field-card-stack { height: calc(65px + (var(--stack-size) - 1) * 5px); }
-  .field-slot .play-card { top: calc(var(--stack-top) * 5px); height: 65px; padding: 5px; }
+  .field-zone { grid-template-columns: repeat(4, minmax(90px, 1fr)); gap: 4px; padding: 6px; }
+  .field-slot { min-height: 143px; }
+  .field-card-stack { height: calc(135px + (var(--stack-size) - 1) * 15px); }
+  .field-slot .play-card { top: calc(var(--stack-top) * 15px); height: 135px; padding: 5px; }
+  .field-slot .play-card-art { height: 36px; margin-top: 12px; }
+  .field-slot .play-card-image { height: 36px; margin-top: 12px; }
+  .field-slot .play-card-name { font-size: 8px; }
+  .field-slot .play-card-effect { font-size: 6px; }
   .control-group { width: 100%; }
   .play-controls { justify-content: flex-start; }
 }
