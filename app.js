@@ -284,6 +284,9 @@ let catalogQuery = "";
 let catalogSearchComposing = false;
 let previewCardId = null;
 let game = null;
+let onlineRoom = null;
+let applyingOnlineState = false;
+let lastOnlineSnapshot = "";
 let toastTimer;
 let cloudUser = null;
 let cloudDecksReady = false;
@@ -761,6 +764,191 @@ function startGame(deckId) {
   setView("play");
 }
 
+function createRoomCode() {
+  const alphabet = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+  const random = new Uint8Array(6);
+  crypto.getRandomValues(random);
+  return [...random].map((value) => alphabet[value % alphabet.length]).join("");
+}
+
+function createPublicBoardSnapshot() {
+  if (!game || !onlineRoom) return null;
+  const deck = findDeck(game.deckId);
+  return {
+    playerId: onlineRoom.playerId,
+    playerName: "プレイヤー",
+    deckName: deck?.name || "プレイ中のデッキ",
+    turn: game.turn,
+    frontLine: [...game.frontLine],
+    energyLine: [...game.energyLine],
+    raidStacks: structuredClone(game.raidStacks || {}),
+    rotated: { ...game.rotated },
+    handCount: game.hand.length,
+    pileCount: game.pile.length,
+    lifeCount: game.lifeCards.length,
+    trash: [...game.trash],
+    removed: [...game.removed],
+  };
+}
+
+function isValidOnlineSnapshot(snapshot, expectedSenderId) {
+  const isCardZone = (zone) => Array.isArray(snapshot[zone])
+    && snapshot[zone].length === 4
+    && snapshot[zone].every((cardId) => cardId === null || (typeof cardId === "string" && cardId.length <= 100));
+  const isCardList = (cards) => Array.isArray(cards)
+    && cards.length <= 50
+    && cards.every((cardId) => typeof cardId === "string" && cardId.length <= 100);
+  return Boolean(snapshot && typeof snapshot === "object" && !Array.isArray(snapshot)
+    && typeof snapshot.playerId === "string" && snapshot.playerId === expectedSenderId
+    && typeof snapshot.playerName === "string" && snapshot.playerName.length <= 40
+    && isCardZone("frontLine") && isCardZone("energyLine")
+    && snapshot.raidStacks && typeof snapshot.raidStacks === "object" && !Array.isArray(snapshot.raidStacks)
+    && Object.entries(snapshot.raidStacks).every(([key, stack]) =>
+      /^(frontLine|energyLine):[0-3]$/.test(key) && isCardList(stack))
+    && snapshot.rotated && typeof snapshot.rotated === "object" && !Array.isArray(snapshot.rotated)
+    && Object.entries(snapshot.rotated).every(([key, rotated]) =>
+      /^(frontLine|energyLine):[0-3]$/.test(key) && typeof rotated === "boolean")
+    && ["turn", "handCount", "pileCount", "lifeCount"].every((key) =>
+      Number.isInteger(snapshot[key]) && snapshot[key] >= 0 && snapshot[key] <= 10000)
+    && isCardList(snapshot.trash) && isCardList(snapshot.removed));
+}
+
+function publishOnlineState() {
+  if (!onlineRoom?.connected || !game || applyingOnlineState) return;
+  const snapshot = createPublicBoardSnapshot();
+  const signature = JSON.stringify(snapshot);
+  if (signature === lastOnlineSnapshot) return;
+  lastOnlineSnapshot = signature;
+  onlineRoom.channel.send({
+    type: "broadcast",
+    event: "board-state",
+    payload: { snapshot },
+  }).then((status) => {
+    if (status !== "ok") {
+      console.error("対戦盤面を共有できませんでした。", status);
+      showToast("盤面の共有に失敗しました。接続状態を確認してください。");
+    }
+  }).catch((error) => {
+    console.error("対戦盤面を共有できませんでした。", error);
+    showToast("盤面の共有に失敗しました。接続状態を確認してください。");
+  });
+}
+
+async function connectOnlineRoom(deckId, requestedCode = "") {
+  if (!supabaseClient) {
+    showToast("オンライン対戦にはSupabaseの設定が必要です。");
+    return;
+  }
+  const deck = findDeck(deckId);
+  if (!deck || !deckSize(deck)) {
+    showToast("カードが入ったデッキを選んでください。");
+    return;
+  }
+  const code = requestedCode ? requestedCode.trim().toUpperCase() : createRoomCode();
+  if (!/^[A-Z0-9]{6}$/.test(code)) {
+    showToast("ルームコードは英数字6文字で入力してください。");
+    return;
+  }
+  await leaveOnlineRoom(false);
+  const playerId = crypto.randomUUID();
+  const channel = supabaseClient.channel(`ua-game:${code}`, {
+    config: { broadcast: { self: false }, presence: { key: playerId } },
+  });
+  onlineRoom = { code, playerId, channel, connected: false, opponent: null, opponentId: null, status: "接続中…" };
+  lastOnlineSnapshot = "";
+  channel
+    .on("broadcast", { event: "board-state" }, ({ payload }) => {
+      const snapshot = payload?.snapshot;
+      if (!onlineRoom || onlineRoom.playerId !== playerId || !snapshot || snapshot.playerId === playerId) return;
+      if (!isValidOnlineSnapshot(snapshot, onlineRoom.opponentId)) {
+        console.warn("無効な対戦盤面データを受信したため破棄しました。");
+        return;
+      }
+      onlineRoom.opponent = snapshot;
+      onlineRoom.status = "対戦相手と接続中";
+      if (game) {
+        applyingOnlineState = true;
+        renderPlay();
+        applyingOnlineState = false;
+      } else {
+        renderPlay();
+      }
+    })
+    .on("presence", { event: "sync" }, () => {
+      if (!onlineRoom || onlineRoom.playerId !== playerId) return;
+      const players = Object.values(channel.presenceState()).flat();
+      const orderedPlayers = [...players].sort((left, right) =>
+        (left.joinedAt || 0) - (right.joinedAt || 0) || left.playerId.localeCompare(right.playerId));
+      if (orderedPlayers.length > 2 && orderedPlayers.findIndex((player) => player.playerId === playerId) > 1) {
+        showToast("このルームは満員です。別のルームコードを使用してください。");
+        void leaveOnlineRoom(true);
+        return;
+      }
+      const opponent = orderedPlayers.find((player) => player.playerId !== playerId);
+      if (players.length > 2) {
+        showToast("このルームは満員です。別のルームコードを使用してください。");
+        void leaveOnlineRoom(true);
+        return;
+      }
+      onlineRoom.opponentName = opponent?.playerName || null;
+      onlineRoom.opponentId = opponent?.playerId || null;
+      if (!opponent) onlineRoom.opponent = null;
+      onlineRoom.status = opponent ? "対戦相手と接続中" : "相手の参加を待っています";
+      if (opponent && game) lastOnlineSnapshot = "";
+      renderPlay();
+    })
+    .subscribe(async (status) => {
+      if (status === "SUBSCRIBED") {
+        const currentPlayers = Object.values(channel.presenceState()).flat();
+        if (currentPlayers.length >= 2) {
+          showToast("このルームは満員です。別のルームコードを使用してください。");
+          await leaveOnlineRoom(true);
+          return;
+        }
+        try {
+          const { error } = await channel.track({
+            playerId,
+            playerName: "プレイヤー",
+            joinedAt: Date.now(),
+          });
+          if (error) throw error;
+        } catch (error) {
+          console.error("対戦ルームに参加できませんでした。", error);
+          showToast("対戦ルームへの参加に失敗しました。");
+          await leaveOnlineRoom(true);
+          return;
+        }
+        if (!onlineRoom || onlineRoom.playerId !== playerId) return;
+        onlineRoom.connected = true;
+        startGame(deckId);
+        showToast(requestedCode ? `ルーム ${code} に参加しました。` : `ルーム ${code} を作成しました。コードを友人に共有してください。`);
+      } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
+        console.error("対戦ルームへの接続に失敗しました。", status);
+        showToast("対戦ルームに接続できません。SupabaseのRealtime設定を確認してください。");
+        await leaveOnlineRoom(true);
+      }
+    });
+}
+
+async function leaveOnlineRoom(returnToSetup = false) {
+  const currentRoom = onlineRoom;
+  onlineRoom = null;
+  lastOnlineSnapshot = "";
+  if (currentRoom?.channel) {
+    try {
+      const status = await currentRoom.channel.unsubscribe();
+      if (status !== "ok") throw new Error(`Realtime unsubscribe status: ${status}`);
+    } catch (error) {
+      console.error("対戦ルームから退出できませんでした。", error);
+      showToast("対戦ルームの切断に失敗しました。");
+    }
+  }
+  if (returnToSetup) {
+    game = null;
+    renderPlay();
+  }
+}
+
 function shuffle(array) {
   for (let i = array.length - 1; i > 0; i--) {
     const j = Math.floor(Math.random() * (i + 1));
@@ -1100,12 +1288,46 @@ function moveGameCard(sourceValue, destinationValue) {
   return true;
 }
 
+function renderOpponentBoard() {
+  if (!onlineRoom) return "";
+  const opponent = onlineRoom.opponent;
+  const slotRow = (zone) => {
+    const cards = Array.isArray(opponent?.[zone]) ? opponent[zone] : [];
+    return Array.from({ length: 4 }, (_, index) => {
+      const cardId = cards[index];
+      const card = typeof cardId === "string" ? getCard(cardId) : null;
+      if (!card) return `<div class="remote-field-slot">空きスペース</div>`;
+      const stack = opponent.raidStacks?.[`${zone}:${index}`];
+      const topId = Array.isArray(stack) && stack.length ? stack[stack.length - 1] : cardId;
+      const topCard = getCard(topId) || card;
+      return `<div class="remote-field-slot"><div class="remote-card ${opponent.rotated?.[`${zone}:${index}`] ? "rotated" : ""}" style="--card-color:${COLORS[topCard.color]?.hex || COLORS.none.hex}">${topCard.image ? `<img src="${escapeHtml(topCard.image)}" alt="" loading="lazy" />` : `<span>${escapeHtml(topCard.symbol || "？")}</span>`}<strong>${escapeHtml(topCard.name)}</strong><small>${escapeHtml(topCard.type)} · BP ${topCard.bp || "—"}</small></div>${stack?.length ? `<span class="raid-stack-count">重ね ${stack.length + 1}</span>` : ""}</div>`;
+    }).join("");
+  };
+  const knownTrash = Array.isArray(opponent?.trash) ? opponent.trash : [];
+  const knownRemoved = Array.isArray(opponent?.removed) ? opponent.removed : [];
+  const publicCards = [...knownTrash, ...knownRemoved]
+    .map((id) => getCard(id)?.name)
+    .filter(Boolean);
+  return `<section class="opponent-board" aria-label="対戦相手の盤面">
+    <div class="opponent-board-head"><div><span class="utility-title">OPPONENT</span><h3>${escapeHtml(opponent?.playerName || onlineRoom.opponentName || "対戦相手")}</h3><small>${escapeHtml(onlineRoom.status)}</small></div><div class="opponent-counts"><span>山札 ${Number.isInteger(opponent?.pileCount) ? opponent.pileCount : "—"}</span><span>手札 ${Number.isInteger(opponent?.handCount) ? opponent.handCount : "—"}</span><span>ライフ ${Number.isInteger(opponent?.lifeCount) ? opponent.lifeCount : "—"}</span><span>TURN ${Number.isInteger(opponent?.turn) ? opponent.turn : "—"}</span></div></div>
+    <div class="zone-label">FRONT LINE <span>フロントライン</span></div><div class="remote-field-zone">${slotRow("frontLine")}</div>
+    <div class="zone-label">ENERGY LINE <span>エナジーライン</span></div><div class="remote-field-zone">${slotRow("energyLine")}</div>
+    <div class="opponent-public-zones"><span>トラッシュ ${knownTrash.length}枚</span><span>リムーブ ${knownRemoved.length}枚</span>${publicCards.length ? `<small>${publicCards.map(escapeHtml).join("、")}</small>` : ""}</div>
+  </section>`;
+}
+
 function renderPlay() {
   const el = document.querySelector("#view-play");
   if (!game) {
     const available = decks.filter((deck) => deckSize(deck) > 0);
-    el.innerHTML = `<div class="page-heading play-heading"><div><div class="eyebrow">SOLO PLAYTEST</div><h1>一人回し</h1><p>手札の感触を確かめて、次の一手を見つけよう。</p></div></div>
-      ${available.length ? `<div class="setup-state"><div class="setup-icon">▷</div><h2>デッキを選んでスタート</h2><p>シャッフル後、ライフ7枚と初期手札7枚をセットします。エナジーラインやフロントラインへの移動も試せます。</p><select id="play-deck-select" class="select-input setup-select">${available.map((deck) => `<option value="${escapeHtml(deck.id)}">${escapeHtml(deck.name)}　(${deckSize(deck)}枚)</option>`).join("")}</select><button class="btn btn-coral" data-start-selected>▷　ゲームを始める</button></div>` : `<div class="setup-state"><div class="setup-icon">▤</div><h2>デッキがありません</h2><p>まずはデッキを作ってカードを入れましょう。</p><button class="btn btn-coral" data-action="new-deck">デッキを作る</button></div>`}
+    const deckOptions = available.map((deck) => `<option value="${escapeHtml(deck.id)}">${escapeHtml(deck.name)}　(${deckSize(deck)}枚)</option>`).join("");
+    el.innerHTML = `<div class="page-heading play-heading"><div><div class="eyebrow">PLAYTEST</div><h1>一人回し・オンライン対戦</h1><p>一人で動きを試すか、ルームコードを友人に共有して対戦できます。</p></div></div>
+      ${available.length ? `<div class="setup-state"><div class="setup-icon">▷</div><h2>デッキを選んでスタート</h2><p>シャッフル後、ライフ7枚と初期手札7枚をセットします。エナジーラインやフロントラインへの移動も試せます。</p><select id="play-deck-select" class="select-input setup-select">${deckOptions}</select><button class="btn btn-coral" data-start-selected>▷　一人回しを始める</button>
+        <div class="online-setup"><div class="online-setup-heading"><span class="eyebrow">FRIEND MATCH</span><h3>友人とオンライン対戦</h3><p>Supabase Realtimeで盤面を共有します。ルームコードを知っている人は参加できます。</p></div>
+          <select id="online-deck-select" class="select-input setup-select" aria-label="オンライン対戦で使うデッキ">${deckOptions}</select>
+          <div class="online-room-actions"><button class="btn btn-coral" data-create-room ${supabaseClient ? "" : "disabled"}>ルームを作成</button><span>または</span><input id="online-room-code" class="search-input" maxlength="6" autocomplete="off" placeholder="6桁のコード" aria-label="ルームコード" /><button class="btn btn-light" data-join-room ${supabaseClient ? "" : "disabled"}>参加</button></div>
+          ${supabaseClient ? "" : `<small class="online-config-note">Supabaseの設定後に利用できます。</small>`}
+        </div></div>` : `<div class="setup-state"><div class="setup-icon">▤</div><h2>デッキがありません</h2><p>まずはデッキを作ってカードを入れましょう。</p><button class="btn btn-coral" data-action="new-deck">デッキを作る</button></div>`}
       <p class="rules-note" style="margin-top:15px">一人回し用の盤面です。AP・エナジーの支払い、効果、バトル等のルール処理は行わないため、実際の対戦では公式ルールをご確認ください。</p>`;
     return;
   }
@@ -1118,9 +1340,10 @@ function renderPlay() {
   const selectedCard = game.selectedHandIndex === null ? null : getCard(game.hand[game.selectedHandIndex]);
   const selected = game.selectedHandIndex !== null && game.hand[game.selectedHandIndex] !== undefined;
   const log = game.log.length ? game.log.map((item) => `<div class="log-item"><span class="log-time">${item.time}</span><span>${escapeHtml(item.message)}</span></div>`).join("") : `<div class="no-results">まだ操作はありません</div>`;
-  el.innerHTML = `  <div class="page-heading play-heading"><div><div class="eyebrow">SOLO PLAYTEST</div><h1>一人回し</h1><p>カードを移動先へドラッグできます。クリック操作も利用できます。</p></div><button class="btn btn-light" data-end-game>← 終了する</button></div>
+  el.innerHTML = `  <div class="page-heading play-heading"><div><div class="eyebrow">${onlineRoom ? "FRIEND MATCH" : "SOLO PLAYTEST"}</div><h1>${onlineRoom ? "オンライン対戦" : "一人回し"}</h1><p>${onlineRoom ? `ルームコード <strong class="room-code">${onlineRoom.code}</strong>　·　${escapeHtml(onlineRoom.status)}　<button class="text-button" data-copy-room>コードをコピー</button>` : "カードを移動先へドラッグできます。クリック操作も利用できます。"}</p></div><button class="btn btn-light" data-end-game>← ${onlineRoom ? "ルームを退出" : "終了する"}</button></div>
     <div class="play-layout"><section class="play-table">
       <div class="play-table-top"><div><h2>${escapeHtml(deck?.name || "プレイ中のデッキ")}</h2><p>山札 ${game.pile.length} 枚　·　トラッシュ ${game.trash.length} 枚</p></div><span class="round-badge">TURN ${game.turn}</span></div>
+      ${renderOpponentBoard()}
       <section class="player-board" aria-label="自分側の盤面">
         <div class="zone-label">FRONT LINE <span>${game.frontLine.filter(Boolean).length} / 4　·　フロントライン</span></div>
         <div class="field-zone front-zone">${renderSlots("frontLine")}</div>
@@ -1144,6 +1367,7 @@ function renderPlay() {
       <section class="game-panel"><h3>プレイログ</h3><div class="game-log">${log}</div></section>
       <div class="rules-note">カードを手札・ライフ・山札・フロントライン・エナジーライン・トラッシュ・リムーブへドラッグして移動できます。フロントラインまたはエナジーラインのカードに重ねてドロップするとスタックします。場のカードをクリックすると手札に戻り、右クリックで縦向き・横向きを切り替えます。山札を見ると上から指定枚数を確認して順番や移動先を決められます。エナジー・APの支払いは手動です。</div>
     </aside></div>${renderGameDialog()}`;
+  publishOnlineState();
 }
 
 document.addEventListener("click", async (event) => {
@@ -1270,6 +1494,26 @@ document.addEventListener("click", async (event) => {
     if (select) startGame(select.value);
     return;
   }
+  if (target.hasAttribute("data-create-room") || target.hasAttribute("data-join-room")) {
+    const deckSelect = document.querySelector("#online-deck-select");
+    if (!deckSelect) return;
+    const roomCode = target.hasAttribute("data-join-room")
+      ? document.querySelector("#online-room-code")?.value || ""
+      : "";
+    void connectOnlineRoom(deckSelect.value, roomCode);
+    return;
+  }
+  if (target.hasAttribute("data-copy-room")) {
+    if (!onlineRoom) return;
+    try {
+      await navigator.clipboard.writeText(onlineRoom.code);
+      showToast("ルームコードをコピーしました。");
+    } catch (error) {
+      console.error("ルームコードをコピーできませんでした。", error);
+      showToast(`ルームコード ${onlineRoom.code} をコピーできませんでした。`);
+    }
+    return;
+  }
   if (target.hasAttribute("data-draw")) { drawCard(); renderPlay(); return; }
   if (target.hasAttribute("data-life-damage")) {
     const id = game.lifeCards.pop();
@@ -1303,7 +1547,12 @@ document.addEventListener("click", async (event) => {
     addLog(`ターン ${game.turn}。1枚ドローしました。`);
     renderPlay(); return;
   }
-  if (target.hasAttribute("data-end-game")) { game = null; renderPlay(); return; }
+  if (target.hasAttribute("data-end-game")) {
+    game = null;
+    if (onlineRoom) await leaveOnlineRoom();
+    renderPlay();
+    return;
+  }
   if (target.dataset.selectCard !== undefined) {
     const handIndex = Number(target.dataset.selectCard);
     game.selectedHandIndex = game.selectedHandIndex === handIndex ? null : handIndex;
@@ -1404,6 +1653,12 @@ document.addEventListener("cancel", (event) => {
 }, true);
 
 document.addEventListener("input", (event) => {
+  if (event.target.id === "online-room-code") {
+    const input = event.target;
+    const cursor = input.selectionStart;
+    input.value = input.value.toUpperCase().replace(/[^A-Z0-9]/g, "").slice(0, 6);
+    input.setSelectionRange(cursor, cursor);
+  }
   if (event.target.id === "deck-name") {
     const deck = findDeck(editingDeckId);
     if (!deck) return;

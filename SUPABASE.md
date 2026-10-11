@@ -49,6 +49,12 @@ Deploy the configured app, open it, and use **ログイン → アカウント�
 
 Every deck edit is saved locally first and then synchronized to the signed-in user's account. On another browser, open the same deployed URL and sign in with the same account. Without a configured Supabase project, the app continues to use local storage.
 
+## 6. Play a friend match
+
+On the solo-play screen, select a deck and create a room. Share the displayed six-character code with one friend; they select their deck, enter the code, and join. The two players' field cards, rotations, turn number, hand/deck/life counts, and public trash/removed cards are broadcast live through Supabase Realtime. Hand contents, deck order, and life-card identities are not shared. The room is temporary and disappears when both players leave; no room table or additional schema is required.
+
+Anyone who knows the room code can join and see the public board state, so share it only with the intended friend. This first version synchronizes board display only; it does not enforce game rules or turn ownership, prevent either player from making any manual move, or provide anti-cheat protection. The app remains a manual playtest tool, not an authoritative competitive game server.
+
 ## Development notes
 
 - Do not commit project secrets. The URL and public key are not secrets, but use a separate Supabase project for development if desired.

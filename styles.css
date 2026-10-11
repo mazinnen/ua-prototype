@@ -326,6 +326,31 @@ button { cursor: pointer; }
 .setup-icon { display: grid; place-items: center; width: 53px; height: 53px; margin-bottom: 11px; border: 1px solid #42516a; border-radius: 16px; color: #f59a82; background: #24344b; font-size: 23px; }
 .setup-state h2 { margin: 6px 0; font-size: 17px; }
 .setup-state p { max-width: 310px; margin: 0 0 17px; color: #a4afbf; font-size: 10px; line-height: 1.8; }
+.online-setup { width: min(560px, 100%); margin-top: 27px; padding-top: 21px; border-top: 1px solid #34445b; }
+.online-setup-heading h3 { margin: 5px 0; font-size: 14px; }
+.online-setup-heading p { max-width: none; margin-bottom: 12px; }
+.online-room-actions { display: flex; flex-wrap: wrap; align-items: center; justify-content: center; gap: 8px; }
+.online-room-actions .search-input { width: 125px; height: 39px; border: 1px solid #46546a; color: white; background: #233249; text-align: center; text-transform: uppercase; }
+.online-room-actions > span, .online-config-note { color: #9daabd; font-size: 9px; }
+.room-code { display: inline-block; padding: 3px 7px; border: 1px solid #46546a; border-radius: 4px; color: #f0c776; font-size: 12px; letter-spacing: .12em; }
+.text-button { padding: 0; border: 0; color: #f0c776; background: transparent; font-size: 9px; text-decoration: underline; }
+.opponent-board { margin-top: 15px; padding: 13px 14px; border: 1px solid #42516a; border-radius: 7px; background: #1d2a3e; }
+.opponent-board-head { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; }
+.opponent-board-head h3 { margin: 4px 0; font-size: 13px; }
+.opponent-board-head small { color: #a4afbf; font-size: 9px; }
+.opponent-counts { display: flex; flex-wrap: wrap; gap: 5px; }
+.opponent-counts span, .opponent-public-zones span { padding: 5px 7px; border: 1px solid #3b4a60; border-radius: 4px; color: #d5dce5; font-size: 8px; }
+.remote-field-zone { display: grid; grid-template-columns: repeat(4, minmax(75px, 1fr)); gap: 7px; overflow-x: auto; }
+.remote-field-slot { position: relative; min-width: 75px; min-height: 116px; display: grid; place-items: center; border: 1px dashed #45546b; border-radius: 5px; color: #708097; font-size: 8px; }
+.remote-card { display: grid; align-content: start; justify-items: center; gap: 4px; width: min(100%, 90px); height: 108px; padding: 5px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--card-color) 50%, white); border-radius: 5px; color: #26334a; background: white; }
+.remote-card img { width: 100%; height: 68px; object-fit: contain; }
+.remote-card > span { display: grid; place-items: center; width: 100%; height: 68px; color: var(--card-color); background: color-mix(in srgb, var(--card-color) 12%, white); font-size: 20px; font-weight: 800; }
+.remote-card strong, .remote-card small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.remote-card strong { font-size: 8px; }
+.remote-card small { color: #7d8998; font-size: 7px; }
+.remote-card.rotated { transform: rotate(90deg) scale(.72); }
+.opponent-public-zones { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; margin-top: 10px; }
+.opponent-public-zones small { flex-basis: 100%; color: #a4afbf; font-size: 8px; }
 .setup-select { width: min(280px, 100%); margin-bottom: 10px; }
 .rules-note { padding: 11px; border-radius: 6px; color: #738198; background: #f6f7f9; font-size: 9px; line-height: 1.7; }
 .toast { position: fixed; z-index: 20; right: 23px; bottom: 22px; padding: 11px 15px; border: 1px solid #30415a; border-radius: 7px; color: white; background: #17263b; box-shadow: 0 8px 22px #101a2a24; font-size: 11px; opacity: 0; pointer-events: none; transform: translateY(8px); transition: .2s ease; }
