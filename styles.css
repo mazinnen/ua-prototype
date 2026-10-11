@@ -52,6 +52,18 @@ button { cursor: pointer; }
 .topbar-right { display: flex; align-items: center; gap: 16px; }
 .local-status { display: flex; align-items: center; gap: 6px; color: #8992a0; font-size: 10px; }
 .local-status i { width: 6px; height: 6px; border-radius: 50%; background: #56b48d; }
+.local-status.cloud-active i { background: #328cc7; }
+.local-status.cloud-error i { background: #d94f4f; }
+.local-status.cloud-error { color: #b43d3d; }
+.account-button { min-height: 32px; padding: 0 11px; font-size: 10px; }
+.auth-dialog { width: min(450px, calc(100vw - 28px)); }
+.auth-form { display: grid; gap: 8px; }
+.auth-form label { margin-top: 5px; color: #657286; font-size: 10px; font-weight: 700; }
+.auth-message { min-height: 20px; margin: 3px 0 0; color: #667386; font-size: 10px; line-height: 1.6; }
+.auth-message:empty { display: none; }
+.auth-form .game-dialog-actions { justify-content: space-between; }
+.signed-in-panel p { color: #657286; font-size: 11px; overflow-wrap: anywhere; }
+.signed-in-panel[hidden], .auth-form[hidden] { display: none; }
 .avatar { display: grid; place-items: center; width: 29px; height: 29px; border: 1px solid #eceef2; border-radius: 50%; color: #687487; background: white; font-size: 10px; font-weight: 700; }
 .view { display: none; padding: 37px 43px 60px; max-width: 1500px; margin: 0 auto; }
 .view.active { display: block; }
@@ -377,6 +389,8 @@ button { cursor: pointer; }
   .play-table { padding: 13px; }
   .player-board { padding: 9px 8px; }
   .game-dialog { padding: 17px; }
+  .topbar-right { gap: 8px; }
+  .local-status { font-size: 8px; }
   .game-dialog-card { grid-template-columns: 35px minmax(0, 1fr) auto; gap: 7px; }
   .game-dialog-card .select-input { grid-column: 2 / 3; }
   .game-dialog-move-actions { grid-column: 2 / -1; }

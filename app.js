@@ -1,5 +1,10 @@
 const STORAGE_KEY = "union-deck-lab-decks-v1";
 const CATALOG_URL_KEY = "union-deck-lab-catalog-url-v1";
+const LOCAL_BACKUP_KEY = `${STORAGE_KEY}-before-cloud`;
+const cloudConfig = window.UNION_DECK_SUPABASE || {};
+const supabaseClient = cloudConfig.url && cloudConfig.anonKey && window.supabase?.createClient
+  ? window.supabase.createClient(cloudConfig.url, cloudConfig.anonKey)
+  : null;
 const COLORS = {
   red: { label: "赤", hex: "#e9775f" },
   blue: { label: "青", hex: "#5d8cdb" },
@@ -69,7 +74,209 @@ function loadDecks() {
   return [starterDeck()];
 }
 
-let decks = loadDecks();
+function setCloudStatus(message, state = "local") {
+      const status = document.querySelector(".local-status");
+      if (!status) return;
+      status.classList.toggle("cloud-error", state === "error");
+      status.classList.toggle("cloud-active", state === "cloud");
+      const label = status.querySelector("span");
+      if (label) label.textContent = message;
+    }
+
+function renderAuthStatus() {
+      const button = document.querySelector("[data-open-auth]");
+      const form = document.querySelector("#auth-form");
+      const signedInPanel = document.querySelector("#signed-in-panel");
+      const emailLabel = document.querySelector("#signed-in-email");
+      if (!button || !form || !signedInPanel) return;
+      button.textContent = cloudUser ? "アカウント" : "ログイン";
+      form.hidden = Boolean(cloudUser);
+      signedInPanel.hidden = !cloudUser;
+      if (emailLabel) emailLabel.textContent = cloudUser?.email || "";
+    }
+
+function queueChangedDecks(nextDecks) {
+      const previous = new Map(lastSavedDeckSnapshot.map((deck) => [deck.id, JSON.stringify(deck)]));
+      const next = new Map(nextDecks.map((deck) => [deck.id, deck]));
+      for (const deck of nextDecks) {
+        if (previous.get(deck.id) !== JSON.stringify(deck)) {
+          pendingCloudUpserts.set(deck.id, deck);
+          pendingCloudDeletes.delete(deck.id);
+        }
+      }
+      for (const id of previous.keys()) {
+        if (!next.has(id)) {
+          pendingCloudUpserts.delete(id);
+          pendingCloudDeletes.add(id);
+        }
+      }
+      lastSavedDeckSnapshot = structuredClone(nextDecks);
+      if (!cloudUser || !cloudDecksReady || !supabaseClient) return;
+      setCloudStatus("クラウドへ同期中…", "cloud");
+      clearTimeout(cloudSyncTimer);
+      cloudSyncTimer = setTimeout(flushCloudDeckChanges, 450);
+    }
+
+async function flushCloudDeckChanges() {
+      if (!cloudUser || !cloudDecksReady || !supabaseClient) return;
+      const userId = cloudUser.id;
+      const upserts = [...pendingCloudUpserts.values()].map((deck) => ({
+        user_id: userId,
+        deck_id: deck.id,
+        deck_data: deck,
+        updated_at: new Date().toISOString(),
+      }));
+      const deletes = [...pendingCloudDeletes];
+      pendingCloudUpserts.clear();
+      pendingCloudDeletes.clear();
+      try {
+        if (upserts.length) {
+          const { error } = await supabaseClient.from("user_decks").upsert(upserts, { onConflict: "user_id,deck_id" });
+          if (error) throw error;
+        }
+        if (deletes.length) {
+          const { error } = await supabaseClient.from("user_decks").delete().eq("user_id", userId).in("deck_id", deletes);
+          if (error) throw error;
+        }
+        setCloudStatus("クラウドに同期済み", "cloud");
+      } catch (error) {
+        console.error("デッキをクラウドに同期できませんでした。", error);
+        upserts.forEach((row) => pendingCloudUpserts.set(row.deck_id, row.deck_data));
+        deletes.forEach((id) => pendingCloudDeletes.add(id));
+        setCloudStatus("クラウド同期エラー", "error");
+        showToast("クラウドへの保存に失敗しました。接続とSupabaseの設定を確認してください。");
+      }
+    }
+
+async function loadCloudCatalog() {
+      if (!supabaseClient) return;
+      try {
+        const [{ data: cloudTitles, error: titlesError }, { data: cloudCards, error: cardsError }] = await Promise.all([
+          supabaseClient.from("titles").select("id,name"),
+          supabaseClient.from("cards").select("*"),
+        ]);
+        if (titlesError) throw titlesError;
+        if (cardsError) throw cardsError;
+        if (!cloudTitles.length && !cloudCards.length) return;
+        const titleMap = new Map(titles.map((title) => [title.id, title]));
+        cloudTitles.forEach((title) => titleMap.set(title.id, title));
+        const cardMap = new Map(catalog.map((card) => [card.id, card]));
+        cloudCards.forEach((row) => cardMap.set(row.id, {
+          ...row,
+          titleId: row.title_id,
+          cardNumber: row.card_number,
+          apCost: row.ap_cost,
+          requiredEnergy: row.required_energy,
+          generatedEnergy: row.generated_energy,
+        }));
+        titles = [...titleMap.values()];
+        catalog = [...cardMap.values()];
+        if (activeView === "builder") renderBuilder();
+        if (activeView === "decks") renderDecks();
+      } catch (error) {
+        console.error("共有カードカタログを読み込めませんでした。", error);
+        showToast("共有カードデータを取得できません。Supabaseの設定とRLSを確認してください。");
+      }
+    }
+
+function preserveLocalDeckBackup() {
+      try {
+        const localData = localStorage.getItem(STORAGE_KEY);
+        if (localData) {
+          localStorage.setItem(LOCAL_BACKUP_KEY, localData);
+          return true;
+        }
+      } catch (error) {
+        console.error("クラウド移行前のローカルデッキをバックアップできませんでした。", error);
+        showToast("ローカルデッキのバックアップを作成できません。ブラウザーの保存領域を確認してください。");
+      }
+      return false;
+    }
+
+async function activateCloudUser(user) {
+      if (!user || !supabaseClient || (cloudUser?.id === user.id && cloudDecksReady) || activatingCloudUserId === user.id) return;
+      activatingCloudUserId = user.id;
+      setCloudStatus("クラウドを読み込み中…");
+      try {
+        const { data, error } = await supabaseClient.from("user_decks")
+          .select("deck_id,deck_data").eq("user_id", user.id);
+        if (error) throw error;
+        const remoteDecks = data.map((row) => row.deck_data);
+        const localDecks = decks;
+        pendingCloudUpserts.clear();
+        pendingCloudDeletes.clear();
+        clearTimeout(cloudSyncTimer);
+        const hasLocalBackup = preserveLocalDeckBackup();
+        cloudUser = user;
+        renderAuthStatus();
+
+        if (!remoteDecks.length && localDecks.length) {
+          if (window.confirm(`このアカウントにはまだデッキがありません。現在のローカルデッキ ${localDecks.length} 件をクラウドへ保存しますか？\n\n「キャンセル」を選ぶとクラウドを空の状態で開きます。ローカルデータのバックアップはこのブラウザーに残ります。`)) {
+            decks = localDecks;
+          } else {
+            decks = [];
+          }
+        } else {
+          decks = remoteDecks;
+          if (hasLocalBackup && remoteDecks.length) {
+            showToast("クラウドのデッキを読み込みました。移行前のローカルデータはこの端末にバックアップしました。");
+          }
+        }
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(decks));
+        lastSavedDeckSnapshot = structuredClone(decks);
+        cloudDecksReady = true;
+        renderSidebarDecks();
+        renderDecks();
+        renderPlay();
+        setCloudStatus("クラウドに同期済み", "cloud");
+        if (!remoteDecks.length && decks.length) {
+          decks.forEach((deck) => pendingCloudUpserts.set(deck.id, deck));
+          await flushCloudDeckChanges();
+        }
+        document.querySelector("#auth-dialog")?.close();
+      } catch (error) {
+        console.error("クラウドデッキを読み込めませんでした。", error);
+        cloudDecksReady = false;
+        setCloudStatus("クラウド接続エラー", "error");
+        showToast("クラウドのデッキを読み込めません。Supabaseの設定とRLSを確認してください。");
+      } finally {
+        if (activatingCloudUserId === user.id) activatingCloudUserId = null;
+      }
+    }
+
+function initializeSupabase() {
+      if (!supabaseClient) {
+        setCloudStatus("この端末に保存");
+        renderAuthStatus();
+        return;
+      }
+      loadCloudCatalog();
+      const { data: listener } = supabaseClient.auth.onAuthStateChange((event, session) => {
+        if (event === "SIGNED_OUT") {
+          clearTimeout(cloudSyncTimer);
+          cloudUser = null;
+          cloudDecksReady = false;
+          pendingCloudUpserts.clear();
+          pendingCloudDeletes.clear();
+          lastSavedDeckSnapshot = structuredClone(decks);
+          renderAuthStatus();
+          setCloudStatus("この端末に保存");
+          return;
+        }
+        if (session?.user) setTimeout(() => activateCloudUser(session.user), 0);
+      });
+      void listener;
+      supabaseClient.auth.getSession().then(({ data, error }) => {
+        if (error) throw error;
+        if (data.session?.user) return activateCloudUser(data.session.user);
+        setCloudStatus("この端末に保存");
+      }).catch((error) => {
+        console.error("Supabaseのログイン状態を確認できませんでした。", error);
+        setCloudStatus("クラウド接続エラー", "error");
+        showToast("Supabaseに接続できません。設定とネットワークを確認してください。");
+      });
+}
+
 let activeView = "decks";
 let editingDeckId = null;
 let catalogFilter = "all";
@@ -78,13 +285,21 @@ let catalogSearchComposing = false;
 let previewCardId = null;
 let game = null;
 let toastTimer;
+let cloudUser = null;
+let cloudDecksReady = false;
+let activatingCloudUserId = null;
+let cloudSyncTimer = null;
+let pendingCloudUpserts = new Map();
+let pendingCloudDeletes = new Set();
+let lastSavedDeckSnapshot;
+let decks = loadDecks();
+lastSavedDeckSnapshot = structuredClone(decks);
 
 function saveDecks(nextDecks = decks) {
   try {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(nextDecks));
     decks = nextDecks;
-    const indicator = document.querySelector(".save-indicator");
-    if (indicator) indicator.textContent = "✓ 保存しました";
+    queueChangedDecks(nextDecks);
     renderSidebarDecks();
     return true;
   } catch (error) {
@@ -428,7 +643,7 @@ function renderDecks() {
     </div>
     <div class="section-heading"><h2>マイデッキ</h2><span>${decks.length} decks　·　最終更新 ${decks.length ? formatDate(recentDeck) : "—"}</span></div>
     ${decks.length ? `<div class="deck-grid">${deckCards}<button class="deck-card add-deck-card" data-action="new-deck" style="display:grid;place-content:center;justify-items:center;min-height:198px;border-style:dashed;background:transparent;color:#8d97a5"><span style="display:grid;place-items:center;width:37px;height:37px;border:1px solid #e3e6eb;border-radius:50%;font-size:20px">＋</span><span style="margin-top:9px;font-size:10px">デッキを追加</span></button></div>` : `<div class="empty-state"><div class="empty-icon">＋</div><h2>最初のデッキを作ろう</h2><p>カードを選んで、あなたのデッキを組み立てましょう。</p><button class="btn btn-primary" data-action="new-deck">デッキを作る</button></div>`}
-    <p class="rules-note" style="margin-top:19px">デッキはこのブラウザーに自動保存されます。バックアップや別の端末への移行にはJSON書き出し・読み込みをご利用ください。カード名とデータは操作確認用のサンプルです。</p>`;
+    <p class="rules-note" style="margin-top:19px">${cloudUser ? "デッキはこのアカウントに同期されます。移行やバックアップにはJSON書き出し・読み込みもご利用ください。" : "デッキはこのブラウザーに自動保存されます。別の端末への移行にはJSON書き出し・読み込みをご利用ください。"} カード名とデータは操作確認用のサンプルを含みます。</p>`;
 }
 
 function openBuilder(deckId = null) {
@@ -931,13 +1146,49 @@ function renderPlay() {
     </aside></div>${renderGameDialog()}`;
 }
 
-document.addEventListener("click", (event) => {
+document.addEventListener("click", async (event) => {
   const dialog = document.querySelector("#card-preview-dialog");
   if (dialog && event.target === dialog) { dialog.close(); return; }
   const gameDialog = document.querySelector("#game-dialog");
   if (gameDialog && event.target === gameDialog) { closeGameDialog(); return; }
   const target = event.target.closest("button");
   if (!target || target.disabled) return;
+  if (target.hasAttribute("data-open-auth")) {
+    if (!supabaseClient) {
+      showToast("Supabase未設定です。supabase-config.jsにProject URLと公開キーを設定してください。");
+      return;
+    }
+    renderAuthStatus();
+    document.querySelector("#auth-dialog")?.showModal();
+    return;
+  }
+  if (target.hasAttribute("data-close-auth")) {
+    document.querySelector("#auth-dialog")?.close();
+    return;
+  }
+  if (target.hasAttribute("data-sign-up")) {
+    event.preventDefault();
+    document.querySelector("#auth-form")?.requestSubmit(target);
+    return;
+  }
+  if (target.hasAttribute("data-sign-out")) {
+    if (!supabaseClient) return;
+    clearTimeout(cloudSyncTimer);
+    await flushCloudDeckChanges();
+    if (pendingCloudUpserts.size || pendingCloudDeletes.size) {
+      showToast("未同期の変更があります。接続を確認してからログアウトしてください。");
+      return;
+    }
+    const { error } = await supabaseClient.auth.signOut();
+    if (error) {
+      console.error("ログアウトできませんでした。", error);
+      showToast("ログアウトに失敗しました。");
+      return;
+    }
+    document.querySelector("#auth-dialog")?.close();
+    showToast("ログアウトしました。");
+    return;
+  }
   if (target.hasAttribute("data-close-game-dialog")) { closeGameDialog(); return; }
   if (target.dataset.inspectGameCard) {
     game.previewCardId = target.dataset.inspectGameCard;
@@ -1206,7 +1457,38 @@ document.addEventListener("change", (event) => {
   }
 });
 
-document.addEventListener("submit", (event) => {
+document.addEventListener("submit", async (event) => {
+  if (event.target.id === "auth-form") {
+    event.preventDefault();
+    const message = document.querySelector("#auth-message");
+    const email = document.querySelector("#auth-email").value.trim();
+    const password = document.querySelector("#auth-password").value;
+    const signUp = event.submitter?.hasAttribute("data-sign-up");
+    if (!supabaseClient) {
+      if (message) message.textContent = "Supabase未設定です。設定ファイルを確認してください。";
+      return;
+    }
+    if (message) message.textContent = signUp ? "アカウントを作成しています…" : "ログインしています…";
+    try {
+      const result = signUp
+        ? await supabaseClient.auth.signUp({
+          email,
+          password,
+          options: { emailRedirectTo: window.location.href.split("#")[0] },
+        })
+        : await supabaseClient.auth.signInWithPassword({ email, password });
+      if (result.error) throw result.error;
+      if (signUp && !result.data.session) {
+        if (message) message.textContent = "確認メールを送信しました。メール内のリンクから認証してからログインしてください。";
+        return;
+      }
+      if (result.data.user) await activateCloudUser(result.data.user);
+    } catch (error) {
+      console.error(signUp ? "アカウントを作成できませんでした。" : "ログインできませんでした。", error);
+      if (message) message.textContent = error.message || "認証に失敗しました。入力内容をご確認ください。";
+    }
+    return;
+  }
   if (event.target.id !== "catalog-source-form") return;
   event.preventDefault();
   const sourceUrl = document.querySelector("#catalog-source-url").value.trim();
@@ -1217,5 +1499,6 @@ document.querySelectorAll(".nav-item").forEach((item) => item.addEventListener("
 renderSidebarDecks();
 renderDecks();
 renderPlay();
+initializeSupabase();
 const savedCatalogUrl = localStorage.getItem(CATALOG_URL_KEY);
 if (savedCatalogUrl) refreshCatalog(savedCatalogUrl);
