@@ -344,9 +344,10 @@ function renderCatalogRows(deck) {
     && (catalogFilter === "all" || card.color === catalogFilter)
     && `${card.name} ${card.type} ${COLORS[card.color].label}`.toLowerCase().includes(catalogQuery.toLowerCase()));
   return filtered.map((card) => `<div class="catalog-row">
-    <button class="mini-card card-preview-trigger" data-preview-card="${escapeHtml(card.id)}" style="--card-color:${COLORS[card.color].hex}" aria-label="${escapeHtml(card.name)}のカード画像と詳細を表示">${card.image ? `<img class="catalog-card-image" src="${escapeHtml(card.image)}" alt="" loading="lazy" />` : escapeHtml(card.symbol)}</button>
-    <div><button class="card-title card-title-preview" data-preview-card="${escapeHtml(card.id)}">${escapeHtml(card.name)}</button><div class="card-meta"><span>${COLORS[card.color].label}</span><span>${card.type}</span><span>BP ${card.bp || "—"}</span>${card.cardNumber ? `<span>${escapeHtml(card.cardNumber)}</span>` : ""}</div></div>
-    <span class="card-cost">${card.cost}</span><button class="add-card-btn" data-add-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を追加" ${deckCopiesOfCard(deck, card) >= 4 || size >= 50 ? "disabled" : ""}>＋</button>
+    <button class="mini-card card-preview-trigger catalog-card-art" data-preview-card="${escapeHtml(card.id)}" style="--card-color:${COLORS[card.color].hex}" aria-label="${escapeHtml(card.name)}のカード画像と詳細を表示">${card.image ? `<img class="catalog-card-image" src="${escapeHtml(card.image)}" alt="" loading="lazy" />` : escapeHtml(card.symbol)}</button>
+    <div class="catalog-card-info"><div class="catalog-card-heading"><button class="card-title card-title-preview" data-preview-card="${escapeHtml(card.id)}">${escapeHtml(card.name)}</button><span class="card-cost">${card.cost}</span></div>
+      <div class="card-meta"><span>${COLORS[card.color].label}</span><span>${card.type}</span><span>BP ${card.bp || "—"}</span>${card.cardNumber ? `<span>${escapeHtml(card.cardNumber)}</span>` : ""}</div>
+      <button class="add-card-btn" data-add-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を追加" ${deckCopiesOfCard(deck, card) >= 4 || size >= 50 ? "disabled" : ""}>＋</button></div>
   </div>`).join("") || `<div class="no-results">該当するカードがありません</div>`;
 }
 
@@ -583,7 +584,7 @@ function renderBuilder() {
     const card = getCard(id);
     if (!card) return "";
     const copies = deckCopiesOfCard(deck, card);
-    return `<div class="deck-list-row"><div><button class="owned-card-title card-title-preview" data-preview-card="${escapeHtml(card.id)}">${escapeHtml(card.name)}</button><div class="owned-card-meta">${COLORS[card.color].label}　·　${card.cost}コスト　·　BP ${card.bp || "—"}${card.cardNumber ? `　·　${escapeHtml(card.cardNumber)}` : ""}</div></div><div class="quantity-control"><button data-remove-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を1枚減らす">−</button><strong>${count}</strong><button data-add-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を1枚増やす" ${copies >= 4 || size >= 50 ? "disabled" : ""}>＋</button></div></div>`;
+    return `<div class="deck-list-row"><button class="mini-card card-preview-trigger owned-card-art" data-preview-card="${escapeHtml(card.id)}" style="--card-color:${COLORS[card.color].hex}" aria-label="${escapeHtml(card.name)}のカード画像と詳細を表示">${card.image ? `<img class="catalog-card-image" src="${escapeHtml(card.image)}" alt="" loading="lazy" />` : escapeHtml(card.symbol)}</button><div class="owned-card-content"><button class="owned-card-title card-title-preview" data-preview-card="${escapeHtml(card.id)}">${escapeHtml(card.name)}</button><div class="owned-card-meta">${COLORS[card.color].label}　·　${card.cost}コスト　·　BP ${card.bp || "—"}${card.cardNumber ? `　·　${escapeHtml(card.cardNumber)}` : ""}</div></div><div class="quantity-control"><button data-remove-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を1枚減らす">−</button><strong>${count}</strong><button data-add-card="${escapeHtml(card.id)}" aria-label="${escapeHtml(card.name)}を1枚増やす" ${copies >= 4 || size >= 50 ? "disabled" : ""}>＋</button></div></div>`;
   }).join("");
   const colorCount = colors.length;
   const valid = size === 50 && owned.every(([id]) => deckCopiesOfCard(deck, getCard(id)) <= 4);

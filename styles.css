@@ -135,24 +135,28 @@ button { cursor: pointer; }
 .search-input { padding-left: 30px; }
 .search-input:focus, .select-input:focus { border-color: #9fb5da; box-shadow: 0 0 0 2px #e9f0fc; }
 .select-input { width: 112px; }
-.catalog-list { display: grid; max-height: 570px; overflow: auto; }
-.catalog-row { display: grid; grid-template-columns: 39px minmax(0, 1fr) auto 29px; align-items: center; gap: 10px; padding: 9px 14px; border-bottom: 1px solid #f2f3f5; }
-.catalog-row:last-child { border-bottom: 0; }
+.catalog-list { display: grid; grid-template-columns: repeat(auto-fill, minmax(245px, 1fr)); align-content: start; gap: 9px; max-height: 650px; padding: 12px; overflow: auto; }
+.catalog-row { display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; gap: 11px; min-width: 0; padding: 9px; border: 1px solid #f0f2f5; border-radius: 6px; }
 .mini-card { display: grid; place-items: center; width: 36px; height: 46px; border: 1px solid color-mix(in srgb, var(--card-color) 27%, white); border-radius: 4px; color: var(--card-color); background: color-mix(in srgb, var(--card-color) 9%, white); font-size: 9px; font-weight: 800; }
+.catalog-card-art { width: 74px; height: 104px; }
 .card-preview-trigger { padding: 0; overflow: hidden; }
 .card-preview-trigger:focus-visible, .card-title-preview:focus-visible { outline: 2px solid #7698ce; outline-offset: 2px; }
-.catalog-card-image { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: cover; }
+.catalog-card-image { display: block; width: 100%; height: 100%; border-radius: inherit; object-fit: contain; }
+.catalog-card-info { display: grid; justify-items: start; gap: 7px; min-width: 0; }
+.catalog-card-heading { display: flex; align-items: flex-start; justify-content: space-between; gap: 7px; width: 100%; }
 .card-title { margin: 0; color: #263349; font-size: 10px; font-weight: 700; }
 .card-title-preview { padding: 0; border: 0; background: none; text-align: left; }
 .card-title-preview:hover { color: #d96d59; }
-.card-meta { display: flex; gap: 7px; margin-top: 4px; color: #969eaa; font-size: 9px; }
+.card-meta { display: flex; flex-wrap: wrap; gap: 4px 7px; color: #969eaa; font-size: 9px; }
 .card-cost { display: grid; place-items: center; width: 22px; height: 22px; border-radius: 50%; color: #3c4b62; background: #eff2f6; font-size: 9px; font-weight: 700; }
 .add-card-btn { display: grid; place-items: center; width: 26px; height: 26px; border: 1px solid #e8ebef; border-radius: 5px; color: #d96d59; background: #fff; font-size: 17px; }
 .add-card-btn:hover { color: white; border-color: var(--coral); background: var(--coral); }
 .no-results { padding: 28px 12px; color: #8a94a2; text-align: center; font-size: 11px; }
-.deck-list { display: grid; gap: 0; max-height: 375px; overflow: auto; }
-.deck-list-row { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: 8px; padding: 10px 13px; border-bottom: 1px solid #f1f2f5; }
+.deck-list { display: grid; gap: 8px; max-height: 480px; padding: 10px; overflow: auto; }
+.deck-list-row { display: grid; grid-template-columns: 64px minmax(0, 1fr) auto; align-items: center; gap: 9px; min-width: 0; padding: 8px; border: 1px solid #f1f2f5; border-radius: 6px; }
 .deck-list-row:last-child { border-bottom: 0; }
+.owned-card-art { width: 64px; height: 90px; }
+.owned-card-content { min-width: 0; }
 .owned-card-title { color: #29364a; font-size: 10px; font-weight: 600; }
 .owned-card-meta { margin-top: 3px; color: #9aa2ad; font-size: 9px; }
 .quantity-control { display: flex; align-items: center; gap: 8px; }
@@ -393,7 +397,8 @@ button { cursor: pointer; }
   .builder-title input { font-size: 22px; }
   .save-indicator { margin-left: auto; padding-top: 9px; }
   .builder-layout { grid-template-columns: 1fr; }
-  .catalog-list { max-height: 360px; }
+  .catalog-list { grid-template-columns: repeat(auto-fill, minmax(225px, 1fr)); max-height: 440px; padding: 9px; }
+  .deck-list { max-height: 400px; }
   .card-preview-dialog { padding: 38px 18px 20px; }
   .card-preview-layout { grid-template-columns: minmax(0, 1fr); gap: 18px; }
   .card-preview-art { min-height: 0; max-height: 65vh; }
