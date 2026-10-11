@@ -70,12 +70,6 @@ button { cursor: pointer; }
 .eyebrow { color: #e77560; font-size: 9px; font-weight: 800; letter-spacing: .18em; }
 .page-heading { display: flex; align-items: flex-end; justify-content: space-between; margin-bottom: 27px; }
 .deck-toolbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
-.catalog-source { margin: -12px 0 20px; padding: 10px 12px; border: 1px solid #e8ebef; border-radius: 7px; background: #fff; }
-.catalog-source summary { color: #556174; cursor: pointer; font-size: 10px; font-weight: 700; }
-.catalog-source-form { display: flex; gap: 8px; margin-top: 11px; }
-.catalog-source-form input { flex: 1; min-width: 0; height: 35px; padding: 0 10px; border: 1px solid #e5e9ef; border-radius: 5px; outline: none; color: #29364a; font: inherit; font-size: 10px; }
-.catalog-source-form input:focus { border-color: #9fb5da; box-shadow: 0 0 0 2px #e9f0fc; }
-.catalog-source > p { margin: 8px 0 0; color: #919aa7; font-size: 9px; line-height: 1.6; }
 .page-heading h1 { margin: 8px 0 6px; color: #172338; font-size: clamp(25px, 3vw, 35px); line-height: 1.25; letter-spacing: -.045em; }
 .page-heading p { margin: 0; color: #838c99; font-size: 12px; }
 .btn { display: inline-flex; align-items: center; justify-content: center; gap: 8px; min-height: 39px; padding: 0 15px; border: 1px solid transparent; border-radius: 6px; font-size: 11px; font-weight: 700; transition: .15s ease; }

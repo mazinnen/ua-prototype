@@ -31,17 +31,42 @@ window.UNION_DECK_SUPABASE = {
 
 These values are intended to be present in a browser app. **Never put the `service_role` key or database password in this file or in GitHub Pages.** RLS is the security boundary for the public key.
 
-## 4. Load card data into the shared catalog
+## 4. Manage the shared card catalog
 
-The app reads shared titles and cards from the `titles` and `cards` tables. To generate an idempotent SQL seed from the checked-in catalog:
+The app reads titles and cards directly from the Supabase `titles` and `cards` tables. Manage all catalog additions, edits, and removals in the Supabase dashboard's **SQL Editor**; there is no external JSON catalog setting in the app. Card image files remain outside the database, so store their public PNG URLs in the `image` column (for example, from a public Supabase Storage bucket).
 
-```powershell
-node scripts\catalog-to-sql.js
+For the initial catalog import, run [`supabase/catalog-seed.sql`](./supabase/catalog-seed.sql) in SQL Editor. It contains the checked-in sample catalog. Do not regenerate and rerun this seed for routine updates; make future catalog changes directly in the database so the database remains the single source of truth.
+
+For example, add or update a title and card with:
+
+```sql
+insert into public.titles (id, name)
+values ('NEW-TITLE', 'タイトル名')
+on conflict (id) do update set name = excluded.name, updated_at = now();
+
+insert into public.cards (
+  id, title_id, name, color, cost, bp, type, symbol, image, card_number, rarity, effect
+)
+values (
+  'NEW-TITLE-001', 'NEW-TITLE', 'カード名', 'red', 1, 2000,
+  'キャラクター', '記', 'https://example.com/card.png', 'UA00BT/001', 'C', '効果テキスト'
+)
+on conflict (id) do update set
+  title_id = excluded.title_id,
+  name = excluded.name,
+  color = excluded.color,
+  cost = excluded.cost,
+  bp = excluded.bp,
+  type = excluded.type,
+  symbol = excluded.symbol,
+  image = excluded.image,
+  card_number = excluded.card_number,
+  rarity = excluded.rarity,
+  effect = excluded.effect,
+  updated_at = now();
 ```
 
-Open the generated `supabase/catalog-seed.sql`, then run it in the Supabase SQL Editor. Re-run this after updating `assets/cards/catalog.json`. The script only generates SQL; it does not connect to Supabase or upload anything.
-
-For future catalogs, add their title and card records to Supabase using the same columns as `supabase/schema.sql`. Card image files remain outside the database; store their public PNG URLs in the `image` column.
+Adding or updating database rows does not require redeploying the static app. App code or Supabase configuration changes do.
 
 ## 5. Sign in and move local decks to the cloud
 

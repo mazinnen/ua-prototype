@@ -1,5 +1,4 @@
 const STORAGE_KEY = "union-deck-lab-decks-v1";
-const CATALOG_URL_KEY = "union-deck-lab-catalog-url-v1";
 const LOCAL_BACKUP_KEY = `${STORAGE_KEY}-before-cloud`;
 const cloudConfig = window.UNION_DECK_SUPABASE || {};
 const supabaseClient = cloudConfig.url && cloudConfig.anonKey && window.supabase?.createClient
@@ -401,100 +400,6 @@ function showCardPreview(cardId) {
   dialog.showModal();
 }
 
-function validateCatalogPayload(payload) {
-  if (!payload || typeof payload !== "object" || Array.isArray(payload)
-    || payload.format !== "union-deck-lab-catalog" || payload.version !== 1
-    || !Array.isArray(payload.titles) || !Array.isArray(payload.cards)) {
-    throw new Error("カードカタログの形式が正しくありません。READMEのJSON形式をご確認ください。");
-  }
-
-  const nextTitles = payload.titles.map((title) => {
-    if (!title || typeof title.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/i.test(title.id)
-      || typeof title.name !== "string" || !title.name.trim()) {
-      throw new Error("タイトル情報には英数字のidとnameが必要です。");
-    }
-    return { id: title.id, name: title.name.trim() };
-  });
-  if (new Set(nextTitles.map((title) => title.id)).size !== nextTitles.length) {
-    throw new Error("タイトルIDが重複しています。");
-  }
-
-  const knownTitleIds = new Set([...BUILTIN_TITLES, ...nextTitles].map((title) => title.id));
-  const baseUrl = payload.__sourceUrl;
-  const nextCards = payload.cards.map((card) => {
-    if (!card || typeof card.id !== "string" || !/^[a-z0-9][a-z0-9-]*$/i.test(card.id)
-      || typeof card.titleId !== "string" || !knownTitleIds.has(card.titleId)
-      || typeof card.name !== "string" || !card.name.trim()
-      || !Object.hasOwn(COLORS, card.color)
-      || !Number.isInteger(card.cost) || card.cost < 0
-      || !Number.isInteger(card.bp) || card.bp < 0
-      || typeof card.type !== "string" || typeof card.symbol !== "string") {
-      throw new Error(`カード「${card?.id || "不明"}」の情報が不足しているか正しくありません。`);
-    }
-    let image;
-    if (card.image !== undefined && card.image !== "") {
-      if (typeof card.image !== "string") throw new Error(`カード「${card.id}」の画像パスが正しくありません。`);
-      image = baseUrl ? new URL(card.image, baseUrl).href : card.image;
-      if (!/\.png(?:[?#].*)?$/i.test(image)) {
-        throw new Error(`カード「${card.id}」の画像はPNGを指定してください。`);
-      }
-    }
-    return { ...card, name: card.name.trim(), image };
-  });
-  if (new Set(nextCards.map((card) => card.id)).size !== nextCards.length) {
-    throw new Error("カードIDが重複しています。");
-  }
-  return { titles: nextTitles, cards: nextCards };
-}
-
-async function refreshCatalog(sourceUrl, persistUrl = false) {
-  let url;
-  try {
-    url = new URL(sourceUrl);
-  } catch {
-    showToast("カードカタログのURLを確認してください。");
-    return;
-  }
-  const localHttp = url.protocol === "http:" && ["localhost", "127.0.0.1"].includes(url.hostname);
-  if (url.protocol !== "https:" && !localHttp) {
-    showToast("カードカタログにはHTTPSのURLを指定してください。");
-    return;
-  }
-
-  try {
-    const response = await fetch(url.href, { cache: "no-cache" });
-    if (!response.ok) throw new Error(`カードカタログの取得に失敗しました（HTTP ${response.status}）。`);
-    const payload = await response.json();
-    const validated = validateCatalogPayload({ ...payload, __sourceUrl: url.href });
-    const titleMap = new Map(BUILTIN_TITLES.map((title) => [title.id, title]));
-    validated.titles.forEach((title) => titleMap.set(title.id, title));
-    const cardMap = new Map(BUILTIN_CARDS.map((card) => [card.id, card]));
-    validated.cards.forEach((card) => cardMap.set(card.id, card));
-
-    if (persistUrl) {
-      try {
-        localStorage.setItem(CATALOG_URL_KEY, url.href);
-      } catch (error) {
-        console.error("カタログURLを保存できませんでした。", error);
-        showToast("URLを保存できませんでした。ブラウザーの保存領域を確認してください。");
-        return;
-      }
-    }
-    titles = [...titleMap.values()];
-    catalog = [...cardMap.values()];
-    renderSidebarDecks();
-    if (activeView === "builder") renderBuilder();
-    if (activeView === "decks") renderDecks();
-    showToast(`${validated.titles.length}タイトル・${validated.cards.length}枚のカードを読み込みました。`);
-  } catch (error) {
-    console.error("外部カードカタログを読み込めませんでした。", error);
-    const message = error instanceof TypeError
-      ? "カードカタログを取得できません。URLと公開設定、CORS設定を確認してください。"
-      : error.message;
-    showToast(message);
-  }
-}
-
 function createExportPayload(exportedDecks) {
   return {
     format: "union-deck-lab",
@@ -636,9 +541,7 @@ function renderDecks() {
     </article>`;
   }).join("");
 
-  const catalogUrl = localStorage.getItem(CATALOG_URL_KEY) || "";
   document.querySelector("#view-decks").innerHTML = `<div class="page-heading"><div><div class="eyebrow">YOUR WORKSPACE</div><h1>デッキ一覧</h1><p>アイデアを形にして、納得いくまで一人回し。</p></div><div class="deck-toolbar"><button class="btn btn-light" data-export-all>↓ JSON書き出し</button><button class="btn btn-light" data-import-json>↑ JSON読み込み</button><button class="btn btn-primary" data-action="new-deck"><span>＋</span> 新しいデッキ</button><input id="deck-json-file" type="file" accept=".json,application/json" hidden /></div></div>
-    <details class="catalog-source"><summary>外部カードカタログ　·　${titles.length}タイトル / ${catalog.length}枚</summary><form id="catalog-source-form" class="catalog-source-form"><input id="catalog-source-url" type="url" placeholder="https://example.com/union-arena/catalog.json" value="${escapeHtml(catalogUrl)}" aria-label="カードカタログJSONのURL" required /><button class="btn btn-light" type="submit">カタログを更新</button></form><p>公開JSONのURLを指定すると、タイトルとカード一覧を追加できます。HTTPS配信とCORS許可が必要です。画像はPNGのURLを指定してください。</p></details>
     <div class="deck-summary">
       <div class="summary-card"><div><div class="summary-label">保存したデッキ</div><div class="summary-value">${decks.length}<small style="font-size:10px;font-weight:500;color:#9aa2ad"> decks</small></div></div><div class="summary-icon">▤</div></div>
       <div class="summary-card"><div><div class="summary-label">構築済みカード</div><div class="summary-value">${totalCards}<small style="font-size:10px;font-weight:500;color:#9aa2ad"> cards</small></div></div><div class="summary-icon">▧</div></div>
@@ -1744,16 +1647,11 @@ document.addEventListener("submit", async (event) => {
     }
     return;
   }
-  if (event.target.id !== "catalog-source-form") return;
-  event.preventDefault();
-  const sourceUrl = document.querySelector("#catalog-source-url").value.trim();
-  if (sourceUrl) refreshCatalog(sourceUrl, true);
 });
 
 document.querySelectorAll(".nav-item").forEach((item) => item.addEventListener("click", () => setView(item.dataset.view)));
 renderSidebarDecks();
 renderDecks();
 renderPlay();
+localStorage.removeItem("union-deck-lab-catalog-url-v1");
 initializeSupabase();
-const savedCatalogUrl = localStorage.getItem(CATALOG_URL_KEY);
-if (savedCatalogUrl) refreshCatalog(savedCatalogUrl);
