@@ -247,15 +247,15 @@ button { cursor: pointer; }
 .play-card-name { margin-top: 7px; font-size: 9px; font-weight: 800; line-height: 1.35; }
 .play-card-type { margin-top: 3px; color: #818b99; font-size: 8px; }
 .empty-zone { color: #738198; font-size: 10px; }
-.field-zone { display: grid; width: 100%; max-width: 660px; min-height: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 6px; overflow: hidden; border: 1px dashed #42516a; border-radius: 6px; background: #202e42; }
-.field-slot { position: relative; min-width: 0; min-height: 205px; display: grid; place-items: center; border: 1px dashed #45546b; border-radius: 5px; color: #708097; font-size: 8px; }
+.field-zone { display: grid; width: 100%; max-width: none; min-height: 0; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; padding: 6px; overflow: hidden; border: 1px dashed #42516a; border-radius: 6px; background: #202e42; }
+.field-slot { position: relative; min-width: 0; min-height: 258px; display: grid; place-items: center; border: 1px dashed #45546b; border-radius: 5px; color: #708097; font-size: 8px; }
 .field-slot.filled { border-style: solid; }
-.field-card-stack { position: relative; width: 100%; height: calc(198px + (var(--stack-size) - 1) * 18px); }
-.field-slot .play-card { position: absolute; z-index: calc(var(--stack-layer) + 1); top: calc(var(--stack-top) * 18px); left: 50%; min-width: 0; flex-basis: auto; width: min(100%, 142px); height: 198px; min-height: 0; padding: 7px; border-radius: 5px; cursor: grab; transform: translateX(-50%); }
+.field-card-stack { position: relative; width: 100%; height: calc(252px + (var(--stack-size) - 1) * 18px); }
+.field-slot .play-card { position: absolute; z-index: calc(var(--stack-layer) + 1); top: calc(var(--stack-top) * 18px); right: 0; left: 0; min-width: 0; flex-basis: auto; width: min(100%, 180px); height: 252px; min-height: 0; margin-inline: auto; padding: 7px; border-radius: 5px; cursor: grab; }
 .field-slot .play-card:active, .hand-zone .play-card:active { cursor: grabbing; }
-.field-slot .play-card:hover { z-index: 10; transform: translateX(-50%) translateY(-2px); }
-.field-slot .play-card.rotated { transform: translateX(-50%) rotate(90deg) scale(.68); }
-.field-slot .play-card.rotated:hover { transform: translateX(-50%) rotate(90deg) scale(.72); }
+.field-slot .play-card:hover { z-index: 10; transform: translateY(-2px); }
+.field-slot .play-card.rotated { transform: rotate(90deg) scale(.68); }
+.field-slot .play-card.rotated:hover { transform: rotate(90deg) scale(.72); }
 .field-slot .play-card-art { height: 92px; margin-top: 13px; font-size: 18px; }
 .field-slot .play-card-image { height: 92px; margin-top: 13px; }
 .field-slot .play-card-name { display: block; margin-top: 5px; font-size: 9px; line-height: 1.25; }
@@ -355,11 +355,11 @@ button { cursor: pointer; }
 .opponent-board-head small { color: #a4afbf; font-size: 9px; }
 .opponent-counts { display: flex; flex-wrap: wrap; gap: 5px; }
 .opponent-counts span { padding: 5px 7px; border: 1px solid #3b4a60; border-radius: 4px; color: #d5dce5; font-size: 8px; }
-.remote-field-zone { display: grid; width: 100%; max-width: 720px; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; overflow: hidden; }
-.remote-field-slot { position: relative; min-width: 0; min-height: 232px; display: grid; place-items: center; border: 1px dashed #45546b; border-radius: 5px; color: #708097; font-size: 8px; }
-.remote-card { display: grid; align-content: start; justify-items: center; gap: 4px; width: min(100%, 164px); height: 224px; padding: 5px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--card-color) 50%, white); border-radius: 5px; color: #26334a; background: white; font: inherit; cursor: pointer; }
-.remote-card img { width: 100%; height: 174px; object-fit: contain; }
-.remote-card > span { display: grid; place-items: center; width: 100%; height: 174px; color: var(--card-color); background: color-mix(in srgb, var(--card-color) 12%, white); font-size: 20px; font-weight: 800; }
+.remote-field-zone { display: grid; width: 100%; max-width: none; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 6px; overflow: hidden; }
+.remote-field-slot { position: relative; min-width: 0; min-height: 258px; display: grid; place-items: center; border: 1px dashed #45546b; border-radius: 5px; color: #708097; font-size: 8px; }
+.remote-card { display: grid; align-content: start; justify-items: center; gap: 4px; width: min(100%, 180px); height: 250px; padding: 5px; overflow: hidden; border: 1px solid color-mix(in srgb, var(--card-color) 50%, white); border-radius: 5px; color: #26334a; background: white; font: inherit; cursor: pointer; }
+.remote-card img { width: 100%; height: 200px; object-fit: contain; }
+.remote-card > span { display: grid; place-items: center; width: 100%; height: 200px; color: var(--card-color); background: color-mix(in srgb, var(--card-color) 12%, white); font-size: 20px; font-weight: 800; }
 .remote-card strong, .remote-card small { max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .remote-card strong { font-size: 8px; }
 .remote-card small { color: #7d8998; font-size: 7px; }
