@@ -663,6 +663,7 @@ function startGame(deckId) {
     peeked: null,
     peekOriginal: null,
     dialogMode: null,
+    previewReturnMode: null,
     turn: 1,
     log: [],
   };
@@ -928,7 +929,7 @@ function renderGameDialog() {
       const card = getCard(id);
       return `<button class="opponent-public-card" data-inspect-game-card="${escapeHtml(id)}">
         ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="" />` : `<span>${escapeHtml(card?.symbol || "？")}</span>`}
-        <strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || id)} · ${escapeHtml(card?.type || "")} · BP ${card?.bp || "—"}</small>
+        <strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || id)} · ${escapeHtml(card?.type || "")} · BP ${card?.bp || "—"}</small><span class="opponent-card-zoom">詳細を拡大</span>
       </button>`;
     }).join("");
     const zoneName = zone === "energyLine" ? "エナジーライン" : "フロントライン";
@@ -945,7 +946,7 @@ function renderGameDialog() {
       const card = getCard(id);
       return `<button class="opponent-public-card" data-inspect-game-card="${escapeHtml(id)}">
         ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="" />` : `<span>${escapeHtml(card?.symbol || "？")}</span>`}
-        <strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || id)} · ${escapeHtml(card?.type || "")} · BP ${card?.bp || "—"}</small>
+        <strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || id)} · ${escapeHtml(card?.type || "")} · BP ${card?.bp || "—"}</small><span class="opponent-card-zoom">詳細を拡大</span>
       </button>`;
     }).join("");
     return `<dialog id="game-dialog" class="game-dialog game-dialog-wide">
@@ -964,6 +965,7 @@ function renderGameDialog() {
           <div class="game-card-preview-stats"><span>色<strong>${COLORS[card.color].label}</strong></span><span>種類<strong>${escapeHtml(card.type)}</strong></span><span>コスト<strong>${card.cost}</strong></span><span>BP<strong>${card.bp || "—"}</strong></span></div>
           ${card.effect ? `<p class="game-card-preview-effect">${escapeHtml(card.effect)}</p>` : ""}
           ${game.previewSource ? `<button class="btn btn-light" data-inspect-return>このカードを手札に戻す</button>` : ""}
+          ${game.previewReturnMode ? `<button class="btn btn-light" data-inspect-back>一覧へ戻る</button>` : ""}
         </div>
       </div>
     </dialog>`;
@@ -981,7 +983,9 @@ function renderGameDialog() {
     const cards = game.peeked.map((item, index) => {
       const card = getCard(item.id);
       return `<div class="game-dialog-card">
-        ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="" />` : `<span class="game-dialog-card-symbol">${escapeHtml(card?.symbol || "?")}</span>`}
+        <button class="game-dialog-card-image-button" data-inspect-game-card="${escapeHtml(item.id)}" aria-label="${escapeHtml(card?.name || "カード")}の詳細を拡大">
+          ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}" />` : `<span class="game-dialog-card-symbol">${escapeHtml(card?.symbol || "?")}</span>`}<small>拡大して詳細</small>
+        </button>
         <div class="game-dialog-card-name"><strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || item.id)}</small></div>
         <select class="select-input" data-peek-destination="${index}" aria-label="${escapeHtml(card?.name || "カード")}の移動先">${destinations.map(([value, label]) => `<option value="${value}" ${item.destination === value ? "selected" : ""}>${label}</option>`).join("")}</select>
         <div class="game-dialog-reorder"><button data-peek-move="${index}:up" aria-label="上へ移動" ${index === 0 ? "disabled" : ""}>↑</button><button data-peek-move="${index}:down" aria-label="下へ移動" ${index === game.peeked.length - 1 ? "disabled" : ""}>↓</button></div>
@@ -1006,7 +1010,9 @@ function renderGameDialog() {
     const rows = cards.map((id, index) => {
       const card = getCard(id);
       return `<div class="game-dialog-card">
-        ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="" />` : `<span class="game-dialog-card-symbol">${escapeHtml(card?.symbol || "?")}</span>`}
+        <button class="game-dialog-card-image-button" data-inspect-game-card="${escapeHtml(id)}" aria-label="${escapeHtml(card?.name || "カード")}の詳細を拡大">
+          ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}" />` : `<span class="game-dialog-card-symbol">${escapeHtml(card?.symbol || "?")}</span>`}<small>拡大して詳細</small>
+        </button>
         <div class="game-dialog-card-name"><strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || id)}</small></div>
         <div class="game-dialog-move-actions">${destinations.map(([destination, label]) => `<button class="btn btn-light" data-zone-move="${source}:${index}:${destination}">${label}</button>`).join("")}</div>
       </div>`;
@@ -1027,6 +1033,10 @@ function openGameDialog(mode) {
 
 function closeGameDialog(restorePeek = true) {
   if (!game) return;
+  if (game.previewReturnMode) {
+    returnToPreviewList();
+    return;
+  }
   document.querySelector("#game-dialog")?.close();
   if (restorePeek && game.peeked) game.pile.push(...game.peekOriginal.slice().reverse());
   game.peeked = null;
@@ -1035,6 +1045,18 @@ function closeGameDialog(restorePeek = true) {
   game.previewSource = null;
   game.dialogMode = null;
   renderPlay();
+}
+
+function returnToPreviewList() {
+  if (!game?.previewReturnMode) return;
+  const returnMode = game.previewReturnMode;
+  document.querySelector("#game-dialog")?.close();
+  game.previewReturnMode = null;
+  game.previewCardId = null;
+  game.previewSource = null;
+  game.dialogMode = returnMode;
+  renderPlay();
+  document.querySelector("#game-dialog")?.showModal();
 }
 
 function confirmPeek() {
@@ -1398,13 +1420,19 @@ document.addEventListener("click", async (event) => {
   if (target.dataset.inspectGameCard) {
     game.previewCardId = target.dataset.inspectGameCard;
     game.previewSource = target.dataset.inspectSource;
+    game.previewReturnMode = ["peek-cards", "trash", "removed", "opponent-trash", "opponent-removed"].includes(game.dialogMode)
+      || game.dialogMode?.startsWith("opponent-field:")
+      ? game.dialogMode
+      : null;
     openGameDialog("card-preview");
     return;
   }
+  if (target.hasAttribute("data-inspect-back")) { returnToPreviewList(); return; }
   if (target.hasAttribute("data-inspect-return")) {
     const source = game.previewSource;
     game.previewCardId = null;
     game.previewSource = null;
+    game.previewReturnMode = null;
     game.dialogMode = null;
     document.querySelector("#game-dialog")?.close();
     if (source) moveGameCard(source, "hand");
