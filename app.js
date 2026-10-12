@@ -658,6 +658,8 @@ function startGame(deckId) {
     rotated: {},
     raidStacks: {},
     selectedHandIndex: null,
+    apUsed: [false, false, false],
+    hoverCardId: null,
     peeked: null,
     peekOriginal: null,
     dialogMode: null,
@@ -666,6 +668,23 @@ function startGame(deckId) {
   };
   addLog("ゲーム開始。ライフ7枚と初期手札7枚をセットしました。");
   setView("play");
+}
+
+function renderBoardCardInspector() {
+  const container = document.querySelector("#board-card-inspector");
+  if (!container || !game) return;
+  const card = getCard(game.hoverCardId);
+  if (!card) {
+    container.innerHTML = `<p class="inspector-empty">カードにマウスを合わせると、ここに詳細を表示します。</p>`;
+    return;
+  }
+  container.innerHTML = `<div class="board-card-detail">
+    ${card.image ? `<img src="${escapeHtml(card.image)}" alt="${escapeHtml(card.name)}のカード画像" />` : `<div class="board-card-detail-art" style="--card-color:${COLORS[card.color]?.hex || COLORS.none.hex}">${escapeHtml(card.symbol || "？")}</div>`}
+    <p class="board-card-number">${escapeHtml(card.cardNumber || card.id)}${card.rarity ? ` · ${escapeHtml(card.rarity)}` : ""}</p>
+    <h4>${escapeHtml(card.name)}</h4>
+    <div class="board-card-stats"><span>${COLORS[card.color]?.label || "—"}</span><span>${escapeHtml(card.type)}</span><span>コスト ${card.cost}</span><span>BP ${card.bp || "—"}</span></div>
+    ${card.effect ? `<p class="board-card-effect">${escapeHtml(card.effect)}</p>` : ""}
+  </div>`;
 }
 
 function createRoomCode() {
@@ -683,6 +702,7 @@ function createPublicBoardSnapshot() {
     playerName: "プレイヤー",
     deckName: deck?.name || "プレイ中のデッキ",
     turn: game.turn,
+    apUsed: [...game.apUsed],
     frontLine: [...game.frontLine],
     energyLine: [...game.energyLine],
     raidStacks: structuredClone(game.raidStacks || {}),
@@ -712,6 +732,8 @@ function isValidOnlineSnapshot(snapshot, expectedSenderId) {
     && snapshot.rotated && typeof snapshot.rotated === "object" && !Array.isArray(snapshot.rotated)
     && Object.entries(snapshot.rotated).every(([key, rotated]) =>
       /^(frontLine|energyLine):[0-3]$/.test(key) && typeof rotated === "boolean")
+    && (snapshot.apUsed === undefined || (Array.isArray(snapshot.apUsed)
+      && snapshot.apUsed.length === 3 && snapshot.apUsed.every((used) => typeof used === "boolean")))
     && ["turn", "handCount", "pileCount", "lifeCount"].every((key) =>
       Number.isInteger(snapshot[key]) && snapshot[key] >= 0 && snapshot[key] <= 10000)
     && isCardList(snapshot.trash) && isCardList(snapshot.removed));
@@ -889,13 +911,48 @@ function cardMarkup(id, index, zone = "hand", layer = 0) {
     : `data-return-card="${zone}:${index}:${layer}" title="クリックして手札に戻す。別のエリアへドラッグできます" aria-label="${escapeHtml(card.name)}。右クリックで縦横切替"`;
   const dragSource = zone === "hand" ? `hand:${index}` : `field:${zone}:${index}:${layer}`;
   const rotated = zone !== "hand" && game.rotated[`${zone}:${index}`];
-  return `<button class="play-card ${selected ? "selected" : ""} ${rotated ? "rotated" : ""} ${card.image ? "has-card-image" : ""}" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${layer}" draggable="true" data-drag-source="${dragSource}" ${action}>
+  return `<button class="play-card ${selected ? "selected" : ""} ${rotated ? "rotated" : ""} ${card.image ? "has-card-image" : ""}" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${layer}" draggable="true" data-drag-source="${dragSource}" data-hover-card="${escapeHtml(card.id)}" ${action}>
     <span class="play-card-cost">${card.cost}</span>${image}<span class="play-card-name">${escapeHtml(card.name)}</span><span class="play-card-type">${COLORS[card.color].label} · BP ${card.bp || "—"}</span>${card.effect ? `<span class="play-card-effect">${escapeHtml(card.effect)}</span>` : ""}
   </button>`;
 }
 
 function renderGameDialog() {
   if (!game?.dialogMode) return "";
+  if (game.dialogMode.startsWith("opponent-field:")) {
+    const [, zone, indexText] = game.dialogMode.split(":");
+    const index = Number(indexText);
+    const cards = onlineRoom?.opponent?.[zone]?.[index]
+      ? [onlineRoom.opponent[zone][index], ...(onlineRoom.opponent.raidStacks?.[`${zone}:${index}`] || [])]
+      : [];
+    const rows = cards.map((id) => {
+      const card = getCard(id);
+      return `<button class="opponent-public-card" data-inspect-game-card="${escapeHtml(id)}">
+        ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="" />` : `<span>${escapeHtml(card?.symbol || "？")}</span>`}
+        <strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || id)} · ${escapeHtml(card?.type || "")} · BP ${card?.bp || "—"}</small>
+      </button>`;
+    }).join("");
+    const zoneName = zone === "energyLine" ? "エナジーライン" : "フロントライン";
+    return `<dialog id="game-dialog" class="game-dialog game-dialog-wide">
+      <div class="game-dialog-head"><div><p>OPPONENT FIELD · SLOT ${index + 1}</p><h2>${zoneName}のカード</h2></div><button class="card-preview-close" data-close-game-dialog aria-label="閉じる">×</button></div>
+      <div class="opponent-public-card-list">${rows || `<p class="game-dialog-empty">カードはありません。</p>`}</div>
+    </dialog>`;
+  }
+  if (game.dialogMode === "opponent-trash" || game.dialogMode === "opponent-removed") {
+    const zone = game.dialogMode === "opponent-trash" ? "trash" : "removed";
+    const cards = onlineRoom?.opponent?.[zone] || [];
+    const zoneName = zone === "trash" ? "トラッシュ" : "リムーブエリア";
+    const rows = cards.map((id) => {
+      const card = getCard(id);
+      return `<button class="opponent-public-card" data-inspect-game-card="${escapeHtml(id)}">
+        ${card?.image ? `<img src="${escapeHtml(card.image)}" alt="" />` : `<span>${escapeHtml(card?.symbol || "？")}</span>`}
+        <strong>${escapeHtml(card?.name || "不明なカード")}</strong><small>${escapeHtml(card?.cardNumber || id)} · ${escapeHtml(card?.type || "")} · BP ${card?.bp || "—"}</small>
+      </button>`;
+    }).join("");
+    return `<dialog id="game-dialog" class="game-dialog game-dialog-wide">
+      <div class="game-dialog-head"><div><p>OPPONENT ZONE · ${cards.length} CARDS</p><h2>相手の${zoneName}</h2></div><button class="card-preview-close" data-close-game-dialog aria-label="閉じる">×</button></div>
+      <div class="opponent-public-card-list">${rows || `<p class="game-dialog-empty">カードはありません。</p>`}</div>
+    </dialog>`;
+  }
   if (game.dialogMode === "card-preview") {
     const card = getCard(game.previewCardId);
     if (!card) return "";
@@ -1204,19 +1261,19 @@ function renderOpponentBoard() {
       const stack = opponent.raidStacks?.[`${zone}:${index}`];
       const topId = Array.isArray(stack) && stack.length ? stack[stack.length - 1] : cardId;
       const topCard = getCard(topId) || card;
-      return `<div class="remote-field-slot"><div class="remote-card ${opponent.rotated?.[`${zone}:${index}`] ? "rotated" : ""}" style="--card-color:${COLORS[topCard.color]?.hex || COLORS.none.hex}">${topCard.image ? `<img src="${escapeHtml(topCard.image)}" alt="" loading="lazy" />` : `<span>${escapeHtml(topCard.symbol || "？")}</span>`}<strong>${escapeHtml(topCard.name)}</strong><small>${escapeHtml(topCard.type)} · BP ${topCard.bp || "—"}</small></div>${stack?.length ? `<span class="raid-stack-count">重ね ${stack.length + 1}</span>` : ""}</div>`;
+      return `<div class="remote-field-slot"><button class="remote-card opponent-facing ${opponent.rotated?.[`${zone}:${index}`] ? "rotated" : ""}" data-open-opponent-field="${zone}:${index}" data-hover-card="${escapeHtml(topCard.id)}" style="--card-color:${COLORS[topCard.color]?.hex || COLORS.none.hex}" aria-label="${escapeHtml(topCard.name)}の詳細を表示">${topCard.image ? `<img src="${escapeHtml(topCard.image)}" alt="" loading="lazy" />` : `<span>${escapeHtml(topCard.symbol || "？")}</span>`}<strong>${escapeHtml(topCard.name)}</strong><small>${escapeHtml(topCard.type)} · BP ${topCard.bp || "—"}</small></button>${stack?.length ? `<span class="raid-stack-count">重ね ${stack.length + 1}</span>` : ""}</div>`;
     }).join("");
   };
   const knownTrash = Array.isArray(opponent?.trash) ? opponent.trash : [];
   const knownRemoved = Array.isArray(opponent?.removed) ? opponent.removed : [];
-  const publicCards = [...knownTrash, ...knownRemoved]
-    .map((id) => getCard(id)?.name)
-    .filter(Boolean);
-  return `<section class="opponent-board" aria-label="対戦相手の盤面">
+  const apUsed = Array.isArray(opponent?.apUsed) ? opponent.apUsed : [false, false, false];
+  return `<section class="opponent-board ${opponent ? "opponent-board-connected" : ""}" aria-label="対戦相手の盤面">
     <div class="opponent-board-head"><div><span class="utility-title">OPPONENT</span><h3>${escapeHtml(opponent?.playerName || onlineRoom.opponentName || "対戦相手")}</h3><small>${escapeHtml(onlineRoom.status)}</small></div><div class="opponent-counts"><span>山札 ${Number.isInteger(opponent?.pileCount) ? opponent.pileCount : "—"}</span><span>手札 ${Number.isInteger(opponent?.handCount) ? opponent.handCount : "—"}</span><span>ライフ ${Number.isInteger(opponent?.lifeCount) ? opponent.lifeCount : "—"}</span><span>TURN ${Number.isInteger(opponent?.turn) ? opponent.turn : "—"}</span></div></div>
     <div class="zone-label">FRONT LINE <span>フロントライン</span></div><div class="remote-field-zone">${slotRow("frontLine")}</div>
     <div class="zone-label">ENERGY LINE <span>エナジーライン</span></div><div class="remote-field-zone">${slotRow("energyLine")}</div>
-    <div class="opponent-public-zones"><span>トラッシュ ${knownTrash.length}枚</span><span>リムーブ ${knownRemoved.length}枚</span>${publicCards.length ? `<small>${publicCards.map(escapeHtml).join("、")}</small>` : ""}</div>
+    <div class="opponent-aux-zones"><div class="opponent-ap-zone"><span>相手AP</span>${apUsed.map((used, index) => `<span class="opponent-ap-card ${used ? "used" : ""}" aria-label="相手AP ${index + 1} ${used ? "使用済み" : "未使用"}">${index + 1}</span>`).join("")}</div>
+      <button class="opponent-public-zone" data-open-opponent-zone="trash"><span>トラッシュ</span><strong>${knownTrash.length}</strong><small>詳細を確認</small></button>
+      <button class="opponent-public-zone" data-open-opponent-zone="removed"><span>リムーブ</span><strong>${knownRemoved.length}</strong><small>詳細を確認</small></button></div>
   </section>`;
 }
 
@@ -1258,7 +1315,7 @@ function renderPlay() {
         <button class="utility-zone deck-peek-button" data-open-peek ${game.pile.length ? "" : "disabled"}><span class="utility-title">DECK</span><strong>山札を見る</strong><small>上からX枚を確認</small></button>
           <button class="utility-zone deck-bottom-drop" data-drop-zone="pile-bottom"><span class="utility-title">DECK</span><strong>山札の下へ</strong><small>カードをドロップ</small></button>
           <div class="utility-zone life-zone" data-drop-zone="life"><span class="utility-title">LIFE <small>ライフエリア</small></span>${lifeStack}</div>
-          <div class="utility-zone ap-zone"><span class="utility-title">AP <small>APエリア</small></span><div class="ap-cards">${[1, 2, 3].map((item) => `<span class="ap-card" aria-label="APカード ${item}">${item}</span>`).join("")}</div></div>
+          <div class="utility-zone ap-zone"><span class="utility-title">AP <small>クリックで使用状態を切替</small></span><div class="ap-cards">${game.apUsed.map((used, index) => `<button class="ap-card ${used ? "used" : ""}" data-ap-index="${index}" aria-label="APカード ${index + 1} ${used ? "使用済み" : "未使用"}" aria-pressed="${used}">${index + 1}</button>`).join("")}</div></div>
           <button class="utility-zone small-pile zone-open-button" data-open-zone="trash" data-drop-zone="trash" draggable="${game.trash.length ? "true" : "false"}" ${game.trash.length ? `data-drag-source="trash:${game.trash.length - 1}"` : ""}><span class="utility-title">TRASH <small>トラッシュ</small></span><strong>${game.trash.length}</strong><small>一覧・移動</small></button>
           <button class="utility-zone small-pile zone-open-button" data-open-zone="removed" data-drop-zone="removed" draggable="${game.removed.length ? "true" : "false"}" ${game.removed.length ? `data-drag-source="removed:${game.removed.length - 1}"` : ""}><span class="utility-title">REMOVED <small>リムーブ</small></span><strong>${game.removed.length}</strong><small>一覧・移動</small></button>
         </div>
@@ -1267,10 +1324,11 @@ function renderPlay() {
       <div class="play-controls"><div class="control-group"><button class="btn btn-light" data-place-zone="energyLine" ${selected ? "" : "disabled"}>${selectedCard ? `↓ ${escapeHtml(selectedCard.name)}をエナジーへ` : "↓ エナジーラインへ"}</button><button class="btn btn-coral" data-place-zone="frontLine" ${selected ? "" : "disabled"}>${selectedCard ? `↑ ${escapeHtml(selectedCard.name)}をフロントへ` : "↑ フロントラインへ"}</button><button class="btn btn-light" data-discard-selected ${selected ? "" : "disabled"}>トラッシュへ</button></div><div class="control-group"><button class="btn btn-light" data-draw-multiple>＋＋ 2枚ドロー</button><button class="btn btn-light" data-mulligan>↻ マリガン</button><button class="btn btn-coral" data-next-turn>次のターン →</button></div></div>
       </section>
     </section>
-    <aside class="game-sidebar"><section class="game-panel"><h3>ゲーム情報</h3><div class="game-stat"><span>ターン</span><strong>${game.turn}</strong></div><div class="game-stat"><span>山札</span><strong>${game.pile.length} 枚</strong></div><div class="game-stat"><span>手札</span><strong>${game.hand.length} 枚</strong></div><div class="game-stat"><span>ライフ</span><strong>${game.lifeCards.length} / 7 枚</strong></div><div class="game-stat"><span>選択中</span><strong>${selectedCard ? escapeHtml(selectedCard.name) : "—"}</strong></div></section>
+    <aside class="game-sidebar"><section class="game-panel card-inspector-panel"><h3>カード詳細</h3><div id="board-card-inspector"></div></section><section class="game-panel"><h3>ゲーム情報</h3><div class="game-stat"><span>ターン</span><strong>${game.turn}</strong></div><div class="game-stat"><span>山札</span><strong>${game.pile.length} 枚</strong></div><div class="game-stat"><span>手札</span><strong>${game.hand.length} 枚</strong></div><div class="game-stat"><span>ライフ</span><strong>${game.lifeCards.length} / 7 枚</strong></div><div class="game-stat"><span>選択中</span><strong>${selectedCard ? escapeHtml(selectedCard.name) : "—"}</strong></div><div class="game-stat"><span>AP使用</span><strong>${game.apUsed.filter(Boolean).length} / 3</strong></div></section>
       <section class="game-panel"><h3>プレイログ</h3><div class="game-log">${log}</div></section>
       <div class="rules-note">カードを手札・ライフ・山札・フロントライン・エナジーライン・トラッシュ・リムーブへドラッグして移動できます。フロントラインまたはエナジーラインのカードに重ねてドロップするとスタックします。場のカードをクリックすると手札に戻り、右クリックで縦向き・横向きを切り替えます。山札を見ると上から指定枚数を確認して順番や移動先を決められます。エナジー・APの支払いは手動です。</div>
     </aside></div>${renderGameDialog()}`;
+  renderBoardCardInspector();
   publishOnlineState();
 }
 
@@ -1318,6 +1376,25 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (target.hasAttribute("data-close-game-dialog")) { closeGameDialog(); return; }
+  if (target.dataset.openOpponentField) {
+    const [zone, index] = target.dataset.openOpponentField.split(":");
+    if (!["frontLine", "energyLine"].includes(zone) || !/^[0-3]$/.test(index)) return;
+    openGameDialog(`opponent-field:${zone}:${index}`);
+    return;
+  }
+  if (target.dataset.openOpponentZone) {
+    if (!["trash", "removed"].includes(target.dataset.openOpponentZone)) return;
+    openGameDialog(`opponent-${target.dataset.openOpponentZone}`);
+    return;
+  }
+  if (target.dataset.apIndex !== undefined) {
+    const index = Number(target.dataset.apIndex);
+    if (!Number.isInteger(index) || index < 0 || index >= game.apUsed.length) return;
+    game.apUsed[index] = !game.apUsed[index];
+    addLog(`APカード ${index + 1} を${game.apUsed[index] ? "使用済み" : "未使用"}にしました。`);
+    renderPlay();
+    return;
+  }
   if (target.dataset.inspectGameCard) {
     game.previewCardId = target.dataset.inspectGameCard;
     game.previewSource = target.dataset.inspectSource;
@@ -1447,6 +1524,7 @@ document.addEventListener("click", async (event) => {
   }
   if (target.hasAttribute("data-next-turn")) {
     game.turn++;
+    game.apUsed = [false, false, false];
     drawCard(false);
     addLog(`ターン ${game.turn}。1枚ドローしました。`);
     renderPlay(); return;
@@ -1529,6 +1607,26 @@ document.addEventListener("drop", (event) => {
 document.addEventListener("dragend", () => {
   if (game) game.dragSource = null;
   document.querySelectorAll(".drop-active").forEach((element) => element.classList.remove("drop-active"));
+});
+
+document.addEventListener("mouseover", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const card = event.target.closest("[data-hover-card]");
+  if (!card || !game) return;
+  const cardId = card.dataset.hoverCard;
+  if (!cardId || game.hoverCardId === cardId) return;
+  game.hoverCardId = cardId;
+  renderBoardCardInspector();
+});
+
+document.addEventListener("mouseout", (event) => {
+  if (!(event.target instanceof Element)) return;
+  const card = event.target.closest("[data-hover-card]");
+  if (!card || !game || card.contains(event.relatedTarget)) return;
+  if (game.hoverCardId === card.dataset.hoverCard) {
+    game.hoverCardId = null;
+    renderBoardCardInspector();
+  }
 });
 
 document.addEventListener("contextmenu", (event) => {
