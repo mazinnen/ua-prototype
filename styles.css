@@ -436,6 +436,9 @@ button { cursor: pointer; }
   .card-preview-details h2 { font-size: 18px; }
   .game-sidebar { grid-template-columns: minmax(0, 1fr); }
   .game-sidebar > .rules-note { grid-column: auto; }
+  .player-board { display: flex; flex-direction: column; }
+  .utility-zones { order: 1; }
+  .play-controls { order: 2; }
   .utility-zones { grid-template-columns: repeat(3, minmax(0, 1fr)); }
   .play-table { width: 100%; padding: 10px; }
   .player-board, .opponent-board { width: 100%; }
