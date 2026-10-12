@@ -1236,7 +1236,7 @@ function renderPlay() {
     return;
   }
   const deck = findDeck(game.deckId);
-  const hand = game.hand.map((id, index) => cardMarkup(id, index)).join("");
+  const hand = game.hand.map((id, index) => `<div class="hand-card-wrap">${cardMarkup(id, index)}<button class="hand-card-inspect" data-inspect-game-card="${escapeHtml(id)}" aria-label="${escapeHtml(getCard(id)?.name || "カード")}の詳細を表示">拡大</button></div>`).join("");
   const renderSlots = (zone) => game[zone].map((_, index) => renderFieldSlot(zone, index)).join("");
   const lifeStack = game.lifeCards.length
     ? `<button class="zone-stack life-stack" data-life-damage draggable="true" data-drag-source="life:top" aria-label="ライフから1枚を手札に加える"><span class="stack-card"></span><span class="stack-count">${game.lifeCards.length}</span><small>ダメージ</small></button>`
