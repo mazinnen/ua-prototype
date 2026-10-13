@@ -80,6 +80,8 @@ On the solo-play screen, select a deck and create a room. Share the displayed si
 
 During an online match, **盤面をリセット** deals a shuffled starting hand, life, and deck for the current player only. The room and opponent's board remain connected and unchanged; the reset board is shared with the opponent.
 
+The opponent's energy line is shown farther away (above) and their front line closer (below), as seen from your side. Clicking one of your field cards opens destination choices; dragging cards to a zone remains available. For a raid stack, enable **レイドスタックをまとめて移動** in the destination dialog to move every card in the stack together.
+
 In the Supabase dashboard, open **Realtime → Settings** and make sure the Realtime service and **Allow public access to channels** are enabled. This app uses public channels so players can join with a room code without signing in; disabling public access requires private-channel authorization policies and is not supported by this implementation.
 
 Anyone who knows the room code can join and see the public board state, so share it only with the intended friend. This first version synchronizes board display only; it does not enforce game rules or turn ownership, prevent either player from making any manual move, or provide anti-cheat protection. The app remains a manual playtest tool, not an authoritative competitive game server.

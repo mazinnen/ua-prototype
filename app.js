@@ -669,6 +669,7 @@ function startGame(deckId) {
     peeked: null,
     peekOriginal: null,
     dialogMode: null,
+    fieldMoveSource: null,
     previewReturnMode: null,
     turn: 1,
     log: [],
@@ -930,7 +931,7 @@ function cardMarkup(id, index, zone = "hand", layer = 0) {
   const selected = zone === "hand" && game.selectedHandIndex === index;
   const action = zone === "hand"
     ? `data-select-card="${index}" aria-pressed="${selected}"`
-    : `data-return-card="${zone}:${index}:${layer}" title="クリックして手札に戻す。別のエリアへドラッグできます" aria-label="${escapeHtml(card.name)}。右クリックで縦横切替"`;
+    : `data-return-card="${zone}:${index}:${layer}" title="クリックして移動先を選ぶ。ドラッグで直接移動できます" aria-label="${escapeHtml(card.name)}。クリックで移動先を選択、右クリックで縦横切替"`;
   const dragSource = zone === "hand" ? `hand:${index}` : `field:${zone}:${index}:${layer}`;
   const rotated = zone !== "hand" && game.rotated[`${zone}:${index}`];
   return `<button class="play-card ${selected ? "selected" : ""} ${rotated ? "rotated" : ""} ${card.image ? "has-card-image" : ""}" style="--card-color:${COLORS[card.color].hex};--stack-layer:${layer};--stack-top:${layer}" draggable="true" data-drag-source="${dragSource}" data-hover-card="${escapeHtml(card.id)}" ${action}>
@@ -940,6 +941,35 @@ function cardMarkup(id, index, zone = "hand", layer = 0) {
 
 function renderGameDialog() {
   if (!game?.dialogMode) return "";
+  if (game.dialogMode === "field-move") {
+    const source = game.fieldMoveSource || "";
+    const [, zone, indexText, layerText] = source.split(":");
+    const index = Number(indexText);
+    const layer = Number(layerText);
+    const slot = `${zone}:${index}`;
+    const overlays = game.raidStacks?.[slot] || [];
+    const stackSize = (game[zone]?.[index] ? 1 : 0) + overlays.length;
+    const cardId = zone && Number.isInteger(index) && Number.isInteger(layer)
+      ? (layer === 0 ? game[zone]?.[index] : overlays[layer - 1])
+      : null;
+    const card = getCard(cardId);
+    const destinations = [
+      ["hand", "手札"],
+      ["life", "ライフ"],
+      ["pile-top", "山札の上"],
+      ["pile-bottom", "山札の下"],
+      ["energyLine", "エナジーラインへ"],
+      ["frontLine", "フロントラインへ"],
+      ["trash", "トラッシュ"],
+      ["removed", "リムーブ"],
+    ];
+    return `<dialog id="game-dialog" class="game-dialog field-move-dialog">
+      <div class="game-dialog-head"><div><p>MOVE CARD</p><h2>${escapeHtml(card?.name || "カード")}の移動先</h2></div><button class="card-preview-close" data-close-game-dialog aria-label="閉じる">×</button></div>
+      <p class="game-dialog-note">カードの移動先を選んでください。場へ移動する場合は空き枠に置き、空きがなければ別のカードに重ねます。</p>
+      ${stackSize > 1 ? `<label class="field-move-stack-option"><input type="checkbox" data-field-move-all /> レイドスタックをまとめて移動（${stackSize}枚）</label>` : ""}
+      <div class="field-move-options">${destinations.map(([destination, label]) => `<button class="btn btn-light" data-field-move-to="${destination}">${label}</button>`).join("")}</div>
+    </dialog>`;
+  }
   if (game.dialogMode.startsWith("opponent-field:")) {
     const [, zone, indexText] = game.dialogMode.split(":");
     const index = Number(indexText);
@@ -1064,6 +1094,7 @@ function closeGameDialog(restorePeek = true) {
   game.peekOriginal = null;
   game.previewCardId = null;
   game.previewSource = null;
+  game.fieldMoveSource = null;
   game.dialogMode = null;
   renderPlay();
 }
@@ -1075,9 +1106,7 @@ function returnToPreviewList() {
   game.previewReturnMode = null;
   game.previewCardId = null;
   game.previewSource = null;
-  game.dialogMode = returnMode;
-  renderPlay();
-  document.querySelector("#game-dialog")?.showModal();
+  openGameDialog(returnMode);
 }
 
 function confirmPeek() {
@@ -1198,6 +1227,7 @@ function moveGameCard(sourceValue, destinationValue) {
   const source = sourceValue.split(":");
   const destination = destinationValue.split(":");
   let cardId;
+  let cardIds;
   let rotation = false;
   let destinationField = null;
 
@@ -1205,7 +1235,7 @@ function moveGameCard(sourceValue, destinationValue) {
     const [zone, index] = [destination[1], Number(destination[2])];
     const line = game[zone];
     if (!["frontLine", "energyLine"].includes(zone) || !Number.isInteger(index) || !line || index < 0 || index >= line.length) return false;
-    if (source[0] === "field" && source[1] === zone && Number(source[2]) === index) return false;
+    if (["field", "field-stack"].includes(source[0]) && source[1] === zone && Number(source[2]) === index) return false;
     const occupied = Boolean(line[index]);
     destinationField = { zone, index, occupied };
   }
@@ -1227,12 +1257,20 @@ function moveGameCard(sourceValue, destinationValue) {
     if (overlays.length !== layer) return false;
     cardId = layer === 0 ? line[slotIndex] : overlays[layer - 1];
     rotation = Boolean(game.rotated[`${sourceZone}:${slotIndex}`]);
+  } else if (sourceType === "field-stack" && ["frontLine", "energyLine"].includes(sourceZone)) {
+    const line = game[sourceZone];
+    const slotIndex = Number(sourceIndexText);
+    if (!Number.isInteger(slotIndex) || slotIndex < 0 || slotIndex >= line.length || !line[slotIndex]) return false;
+    cardIds = [line[slotIndex], ...(game.raidStacks?.[`${sourceZone}:${slotIndex}`] || [])];
+    cardId = cardIds[0];
+    rotation = Boolean(game.rotated[`${sourceZone}:${slotIndex}`]);
   } else if ((sourceType === "trash" || sourceType === "removed") && Number.isInteger(index)) {
     cardId = game[sourceType][index];
   } else {
     return false;
   }
   if (!cardId) return false;
+  if (!cardIds) cardIds = [cardId];
 
   const validDestination = ["hand", "life", "trash", "removed", "pile-top", "pile-bottom"].includes(destinationValue)
     || Boolean(destinationField);
@@ -1245,7 +1283,13 @@ function moveGameCard(sourceValue, destinationValue) {
   } else if (sourceType === "life") game.lifeCards.pop();
   else if (sourceType === "pile") game.pile.pop();
   else if (sourceType === "trash" || sourceType === "removed") game[sourceType].splice(index, 1);
-  else if (sourceType === "field") {
+  else if (sourceType === "field-stack") {
+    const line = game[sourceZone];
+    const slotIndex = Number(sourceIndexText);
+    line[slotIndex] = null;
+    delete game.raidStacks[`${sourceZone}:${slotIndex}`];
+    delete game.rotated[`${sourceZone}:${slotIndex}`];
+  } else if (sourceType === "field") {
     const line = game[sourceZone];
     const slotIndex = Number(sourceIndexText);
     const layer = Number(sourceLayerText);
@@ -1262,30 +1306,31 @@ function moveGameCard(sourceValue, destinationValue) {
     if (occupied) {
       const slot = `${zone}:${targetIndex}`;
       if (!game.raidStacks[slot]) game.raidStacks[slot] = [];
-      game.raidStacks[slot].push(cardId);
+      game.raidStacks[slot].push(...cardIds);
       if (rotation) game.rotated[slot] = true;
-      addLog(`${getCard(cardId).name}を${zone === "energyLine" ? "エナジーライン" : "フロントライン"}のカードに重ねました。`);
+      addLog(`${cardIds.length}枚を${zone === "energyLine" ? "エナジーライン" : "フロントライン"}のカードに重ねました。`);
     } else {
       game[zone][targetIndex] = cardId;
+      if (cardIds.length > 1) game.raidStacks[`${zone}:${targetIndex}`] = cardIds.slice(1);
       if (rotation) game.rotated[`${zone}:${targetIndex}`] = true;
-      addLog(`${getCard(cardId).name}を${zone === "energyLine" ? "エナジーライン" : "フロントライン"}に移動しました。`);
+      addLog(`${cardIds.length}枚を${zone === "energyLine" ? "エナジーライン" : "フロントライン"}に移動しました。`);
     }
   } else if (destinationValue === "hand") {
-    game.hand.push(cardId);
-    if (sourceType === "field") game.selectedHandIndex = game.hand.length - 1;
-    addLog(`${getCard(cardId).name}を手札に移動しました。`);
+    game.hand.push(...cardIds);
+    if (sourceType === "field" || sourceType === "field-stack") game.selectedHandIndex = game.hand.length - 1;
+    addLog(`${cardIds.length}枚を手札に移動しました。`);
   } else if (destinationValue === "life") {
-    game.lifeCards.push(cardId);
-    addLog(`${getCard(cardId).name}をライフに移動しました。`);
+    game.lifeCards.push(...cardIds);
+    addLog(`${cardIds.length}枚をライフに移動しました。`);
   } else if (destinationValue === "trash" || destinationValue === "removed") {
-    game[destinationValue].push(cardId);
-    addLog(`${getCard(cardId).name}を${destinationValue === "trash" ? "トラッシュ" : "リムーブ"}に移動しました。`);
+    game[destinationValue].push(...cardIds);
+    addLog(`${cardIds.length}枚を${destinationValue === "trash" ? "トラッシュ" : "リムーブ"}に移動しました。`);
   } else if (destinationValue === "pile-top") {
-    game.pile.push(cardId);
-    addLog(`${getCard(cardId).name}を山札の上に戻しました。`);
+    game.pile.push(...cardIds);
+    addLog(`${cardIds.length}枚を山札の上に戻しました。`);
   } else if (destinationValue === "pile-bottom") {
-    game.pile.unshift(cardId);
-    addLog(`${getCard(cardId).name}を山札の下に置きました。`);
+    game.pile.unshift(...cardIds);
+    addLog(`${cardIds.length}枚を山札の下に置きました。`);
   }
 
   renderPlay();
@@ -1312,8 +1357,8 @@ function renderOpponentBoard() {
   const apUsed = Array.isArray(opponent?.apUsed) ? opponent.apUsed : [false, false, false];
   return `<section class="opponent-board ${opponent ? "opponent-board-connected" : ""}" aria-label="対戦相手の盤面">
     <div class="opponent-board-head"><div><span class="utility-title">OPPONENT</span><h3>${escapeHtml(opponent?.playerName || onlineRoom.opponentName || "対戦相手")}</h3><small>${escapeHtml(onlineRoom.status)}</small></div><div class="opponent-counts"><span>山札 ${Number.isInteger(opponent?.pileCount) ? opponent.pileCount : "—"}</span><span>手札 ${Number.isInteger(opponent?.handCount) ? opponent.handCount : "—"}</span><span>ライフ ${Number.isInteger(opponent?.lifeCount) ? opponent.lifeCount : "—"}</span><span>TURN ${Number.isInteger(opponent?.turn) ? opponent.turn : "—"}</span></div></div>
-    <div class="zone-label">FRONT LINE <span>フロントライン</span></div><div class="remote-field-zone">${slotRow("frontLine")}</div>
     <div class="zone-label">ENERGY LINE <span>エナジーライン</span></div><div class="remote-field-zone">${slotRow("energyLine")}</div>
+    <div class="zone-label">FRONT LINE <span>フロントライン</span></div><div class="remote-field-zone">${slotRow("frontLine")}</div>
     <div class="opponent-aux-zones"><div class="opponent-ap-zone"><span>相手AP</span>${apUsed.map((used, index) => `<span class="opponent-ap-card ${used ? "used" : ""}" aria-label="相手AP ${index + 1} ${used ? "使用済み" : "未使用"}">${index + 1}</span>`).join("")}</div>
       <button class="opponent-public-zone" data-open-opponent-zone="trash"><span>トラッシュ</span><strong>${knownTrash.length}</strong><small>詳細を確認</small></button>
       <button class="opponent-public-zone" data-open-opponent-zone="removed"><span>リムーブ</span><strong>${knownRemoved.length}</strong><small>詳細を確認</small></button></div>
@@ -1419,6 +1464,42 @@ document.addEventListener("click", async (event) => {
     return;
   }
   if (target.hasAttribute("data-close-game-dialog")) { closeGameDialog(); return; }
+  if (target.dataset.fieldMoveTo) {
+    const dialogSource = game.fieldMoveSource;
+    if (!dialogSource) return;
+    let source = dialogSource;
+    const moveEntireStack = Boolean(document.querySelector("[data-field-move-all]")?.checked);
+    if (moveEntireStack) {
+      source = source.replace(/^field:/, "field-stack:");
+    }
+    let destination = target.dataset.fieldMoveTo;
+    if (destination === "energyLine" || destination === "frontLine") {
+      const [, sourceZone, sourceIndexText] = source.split(":");
+      const sourceIndex = Number(sourceIndexText);
+      const line = game[destination];
+      const isSourceSlot = (index) => sourceZone === destination && index === sourceIndex;
+      let targetIndex = line.findIndex((card, index) => !isSourceSlot(index) && !card);
+      if (targetIndex < 0) {
+        targetIndex = line.findIndex((card, index) => !isSourceSlot(index) && Boolean(card));
+      }
+      if (targetIndex < 0) {
+        showToast(`${destination === "energyLine" ? "エナジーライン" : "フロントライン"}に移動できる枠がありません。`);
+        return;
+      }
+      destination = `field:${destination}:${targetIndex}`;
+    }
+    document.querySelector("#game-dialog")?.close();
+    game.dialogMode = null;
+    game.fieldMoveSource = null;
+    if (!moveGameCard(source, destination)) {
+      game.dialogMode = "field-move";
+      game.fieldMoveSource = dialogSource;
+      renderPlay();
+      document.querySelector("#game-dialog")?.showModal();
+      showToast("カードを移動できませんでした。");
+    }
+    return;
+  }
   if (target.dataset.openOpponentField) {
     const [zone, index] = target.dataset.openOpponentField.split(":");
     if (!["frontLine", "energyLine"].includes(zone) || !/^[0-3]$/.test(index)) return;
@@ -1622,7 +1703,8 @@ document.addEventListener("click", async (event) => {
   if (target.dataset.returnCard !== undefined) {
     const [zone, indexText, layerText] = target.dataset.returnCard.split(":");
     if (!["energyLine", "frontLine"].includes(zone)) return;
-    moveGameCard(`field:${zone}:${indexText}:${layerText}`, "hand");
+    game.fieldMoveSource = `field:${zone}:${indexText}:${layerText}`;
+    openGameDialog("field-move");
     return;
   }
 });
