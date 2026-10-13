@@ -787,7 +787,7 @@ async function connectOnlineRoom(deckId, requestedCode = "") {
   const channel = supabaseClient.channel(`ua-game:${code}`, {
     config: { broadcast: { self: false }, presence: { key: playerId } },
   });
-  onlineRoom = { code, playerId, channel, connected: false, opponent: null, opponentId: null, status: "接続中…" };
+  onlineRoom = { code, playerId, channel, connected: false, hasConnected: false, opponent: null, opponentId: null, status: "接続中…" };
   lastOnlineSnapshot = "";
   channel
     .on("broadcast", { event: "board-state" }, ({ payload }) => {
@@ -830,21 +830,22 @@ async function connectOnlineRoom(deckId, requestedCode = "") {
       if (opponent && game) lastOnlineSnapshot = "";
       renderPlay();
     })
-    .subscribe(async (status) => {
+    .subscribe(async (status, error) => {
       if (status === "SUBSCRIBED") {
         const currentPlayers = Object.values(channel.presenceState()).flat();
-        if (currentPlayers.length >= 2) {
+        const reconnecting = onlineRoom?.hasConnected;
+        if (!reconnecting && currentPlayers.length >= 2) {
           showToast("このルームは満員です。別のルームコードを使用してください。");
           await leaveOnlineRoom(true);
           return;
         }
         try {
-          const { error } = await channel.track({
+          const trackStatus = await channel.track({
             playerId,
             playerName: "プレイヤー",
             joinedAt: Date.now(),
           });
-          if (error) throw error;
+          if (trackStatus !== "ok") throw new Error(`Realtime presence track status: ${trackStatus}`);
         } catch (error) {
           console.error("対戦ルームに参加できませんでした。", error);
           showToast("対戦ルームへの参加に失敗しました。");
@@ -853,11 +854,25 @@ async function connectOnlineRoom(deckId, requestedCode = "") {
         }
         if (!onlineRoom || onlineRoom.playerId !== playerId) return;
         onlineRoom.connected = true;
-        startGame(deckId);
-        showToast(requestedCode ? `ルーム ${code} に参加しました。` : `ルーム ${code} を作成しました。コードを友人に共有してください。`);
+        onlineRoom.hasConnected = true;
+        if (reconnecting) {
+          onlineRoom.status = onlineRoom.opponent ? "対戦相手と接続中" : "相手の参加を待っています";
+          lastOnlineSnapshot = "";
+          renderPlay();
+        } else {
+          startGame(deckId);
+          showToast(requestedCode ? `ルーム ${code} に参加しました。` : `ルーム ${code} を作成しました。コードを友人に共有してください。`);
+        }
       } else if (status === "CHANNEL_ERROR" || status === "TIMED_OUT") {
-        console.error("対戦ルームへの接続に失敗しました。", status);
-        showToast("対戦ルームに接続できません。SupabaseのRealtime設定を確認してください。");
+        console.error("対戦ルームへの接続に失敗しました。", status, error);
+        if (onlineRoom?.hasConnected) {
+          onlineRoom.connected = false;
+          onlineRoom.status = "再接続中…";
+          renderPlay();
+          showToast("対戦ルームの接続が不安定です。再接続を試みています。");
+          return;
+        }
+        showToast(`対戦ルームに接続できません（${status}）。ネットワークとSupabase Realtime設定を確認してください。`);
         await leaveOnlineRoom(true);
       }
     });
