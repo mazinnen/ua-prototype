@@ -197,6 +197,7 @@ button { cursor: pointer; }
 
 /* Solo play */
 .play-heading { align-items: center; }
+.play-heading-actions { display: flex; flex: 0 0 auto; flex-wrap: wrap; justify-content: flex-end; gap: 7px; }
 .play-layout { display: grid; grid-template-columns: minmax(0, 1fr) minmax(250px, 290px); gap: 12px; align-items: start; min-width: 0; }
 .play-table { width: 100%; max-width: 100%; min-width: 0; padding: 12px; border: 1px solid #27364b; border-radius: 9px; color: white; background: #18263a; box-shadow: 0 12px 30px #15233a14; }
 .play-table-top { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding-bottom: 10px; border-bottom: 1px solid #304057; }
@@ -408,9 +409,10 @@ button { cursor: pointer; }
   .view { padding: 25px 17px 34px; }
   .page-heading { align-items: flex-start; gap: 12px; }
   .deck-toolbar { width: 100%; justify-content: flex-start; }
+  .play-heading-actions { width: 100%; }
   .page-heading h1 { font-size: 26px; }
   .page-heading p { font-size: 10px; line-height: 1.7; }
-  .page-heading > .btn { flex: 0 0 auto; min-height: 34px; padding: 0 9px; font-size: 9px; }
+  .page-heading > .btn, .play-heading-actions .btn { flex: 0 0 auto; min-height: 34px; padding: 0 9px; font-size: 9px; }
   .deck-toolbar .btn { min-height: 34px; padding: 0 9px; font-size: 9px; }
   .deck-summary { gap: 7px; }
   .summary-card { min-height: 69px; padding: 11px 10px; }

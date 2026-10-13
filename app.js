@@ -1344,7 +1344,7 @@ function renderPlay() {
   const selectedCard = game.selectedHandIndex === null ? null : getCard(game.hand[game.selectedHandIndex]);
   const selected = game.selectedHandIndex !== null && game.hand[game.selectedHandIndex] !== undefined;
   const log = game.log.length ? game.log.map((item) => `<div class="log-item"><span class="log-time">${item.time}</span><span>${escapeHtml(item.message)}</span></div>`).join("") : `<div class="no-results">まだ操作はありません</div>`;
-  el.innerHTML = `  <div class="page-heading play-heading"><div><div class="eyebrow">${onlineRoom ? "FRIEND MATCH" : "SOLO PLAYTEST"}</div><h1>${onlineRoom ? "オンライン対戦" : "一人回し"}</h1><p>${onlineRoom ? `ルームコード <strong class="room-code">${onlineRoom.code}</strong>　·　${escapeHtml(onlineRoom.status)}　<button class="text-button" data-copy-room>コードをコピー</button>` : "カードを移動先へドラッグできます。クリック操作も利用できます。"}</p></div><button class="btn btn-light" data-end-game>← ${onlineRoom ? "ルームを退出" : "終了する"}</button></div>
+  el.innerHTML = `  <div class="page-heading play-heading"><div><div class="eyebrow">${onlineRoom ? "FRIEND MATCH" : "SOLO PLAYTEST"}</div><h1>${onlineRoom ? "オンライン対戦" : "一人回し"}</h1><p>${onlineRoom ? `ルームコード <strong class="room-code">${onlineRoom.code}</strong>　·　${escapeHtml(onlineRoom.status)}　<button class="text-button" data-copy-room>コードをコピー</button>` : "カードを移動先へドラッグできます。クリック操作も利用できます。"}</p></div><div class="play-heading-actions">${onlineRoom ? `<button class="btn btn-light" data-reset-game>盤面をリセット</button>` : ""}<button class="btn btn-light" data-end-game>← ${onlineRoom ? "ルームを退出" : "終了する"}</button></div></div>
     <div class="play-layout"><section class="play-table">
       <div class="play-table-top"><div><h2>${escapeHtml(deck?.name || "プレイ中のデッキ")}</h2><p>山札 ${game.pile.length} 枚　·　トラッシュ ${game.trash.length} 枚</p></div><span class="round-badge">TURN ${game.turn}</span></div>
       ${renderOpponentBoard()}
@@ -1577,6 +1577,15 @@ document.addEventListener("click", async (event) => {
     drawCard(false);
     addLog(`ターン ${game.turn}。1枚ドローしました。`);
     renderPlay(); return;
+  }
+  if (target.hasAttribute("data-reset-game")) {
+    if (!game || !onlineRoom) return;
+    if (!window.confirm("自分の盤面を初期状態に戻します。対戦相手の盤面とルーム接続は維持されます。リセットしますか？")) return;
+    const deckId = game.deckId;
+    lastOnlineSnapshot = "";
+    startGame(deckId);
+    showToast("自分の盤面をリセットしました。");
+    return;
   }
   if (target.hasAttribute("data-end-game")) {
     game = null;

@@ -78,6 +78,8 @@ Every deck edit is saved locally first and then synchronized to the signed-in us
 
 On the solo-play screen, select a deck and create a room. Share the displayed six-character code with one friend; they select their deck, enter the code, and join. The two players' field cards, rotations, turn number, hand/deck/life counts, and public trash/removed cards are broadcast live through Supabase Realtime. Hand contents, deck order, and life-card identities are not shared. The room is temporary and disappears when both players leave; no room table or additional schema is required.
 
+During an online match, **盤面をリセット** deals a shuffled starting hand, life, and deck for the current player only. The room and opponent's board remain connected and unchanged; the reset board is shared with the opponent.
+
 In the Supabase dashboard, open **Realtime → Settings** and make sure the Realtime service and **Allow public access to channels** are enabled. This app uses public channels so players can join with a room code without signing in; disabling public access requires private-channel authorization policies and is not supported by this implementation.
 
 Anyone who knows the room code can join and see the public board state, so share it only with the intended friend. This first version synchronizes board display only; it does not enforce game rules or turn ownership, prevent either player from making any manual move, or provide anti-cheat protection. The app remains a manual playtest tool, not an authoritative competitive game server.
