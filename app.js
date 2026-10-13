@@ -406,8 +406,8 @@ function createExportPayload(exportedDecks) {
     format: "union-deck-lab",
     version: 1,
     exportedAt: new Date().toISOString(),
-    decks: exportedDecks.map(({ id, name, cards, createdAt, updatedAt }) => ({
-      id, name, cards, createdAt, updatedAt,
+    decks: exportedDecks.map(({ id, name, titleId, cards, createdAt, updatedAt }) => ({
+      id, name, titleId, cards, createdAt, updatedAt,
     })),
   };
 }
@@ -446,27 +446,33 @@ function validateImportedDecks(payload) {
     const cards = {};
     const copyCounts = new Map();
     let size = 0;
-    const titleId = typeof deck.titleId === "string" ? deck.titleId : SAMPLE_TITLE_ID;
-    if (!getTitle(titleId)) {
+    let titleId = typeof deck.titleId === "string" ? deck.titleId : null;
+    if (titleId && !getTitle(titleId)) {
       throw new Error(`「${deck.name}」のタイトルがこのカタログにありません。先に該当タイトルのカードカタログを読み込んでください。`);
     }
     for (const [cardId, count] of Object.entries(deck.cards)) {
-      if (!getCard(cardId)) {
+      const card = getCard(cardId);
+      if (!card) {
         throw new Error(`「${deck.name}」に現在のカード一覧にないカードID（${cardId}）が含まれています。`);
       }
-      if (getCard(cardId).titleId !== titleId) {
+      if (titleId === null) titleId = card.titleId;
+      if (card.titleId !== titleId) {
         throw new Error(`「${deck.name}」に選択中のタイトル以外のカードが含まれています。`);
       }
       if (!Number.isInteger(count) || count < 1 || count > 4) {
         throw new Error(`「${deck.name}」のカード枚数は1種類につき1〜4枚で指定してください。`);
       }
-      const limitId = cardLimitId(getCard(cardId));
+      const limitId = cardLimitId(card);
       copyCounts.set(limitId, (copyCounts.get(limitId) || 0) + count);
       if (copyCounts.get(limitId) > 4) {
         throw new Error(`「${deck.name}」に同じカード番号のカードが5枚以上含まれています。`);
       }
       cards[cardId] = count;
       size += count;
+    }
+    titleId = titleId || SAMPLE_TITLE_ID;
+    if (!getTitle(titleId)) {
+      throw new Error(`「${deck.name}」のタイトルがこのカタログにありません。先に該当タイトルのカードカタログを読み込んでください。`);
     }
     if (size > 50) {
       throw new Error(`「${deck.name}」が50枚を超えています。`);
